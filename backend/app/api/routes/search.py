@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app import crud,schemas,models
 from sqlalchemy.orm import Session
 from app.api import deps
-
-
+from app.core.config import settings
+import requests
 router = APIRouter()
 
 
@@ -32,7 +32,8 @@ def create_search_term(
     return search_result
 
 
-@router.post("/query", response_model=schemas.SearchId)
+@router.post("/query", response_model=schemas.SearchId
+             )
 def create_search_query(
     search_in:schemas.SearchCreate,
     db: Session = Depends(deps.get_db),
@@ -41,8 +42,24 @@ def create_search_query(
     """
     Create a search.
     """
+
     search = crud.search.create(db, obj_in=search_in)
-    return search
+
+    url = "{0}/api/v1/db_scaled/generate_query".format(settings.BACKEND_BASE_URL)
+
+    print(url,"this is the url")
+
+
+    try:
+
+        response = requests.post(url, json=search_in.dict())
+        response.raise_for_status()  # Raises an HTTPError for bad status codes
+        print(response.text)
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f'An error occurred: {e}')
+
+    return {"id":search.id}
 
 
 @router.post(

@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     DEFAULT_ORGANIZATION_DESCRIPTION: str
 
     MEILI_MASTER_KEY: str
+    BACKEND_BASE_URL:str 
 
 
 

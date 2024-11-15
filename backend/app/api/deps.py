@@ -65,7 +65,7 @@ CurrentActiveUser = Annotated[AppUser, Depends(get_current_active_user)]
 
 
 def get_current_active_superuser(current_user: CurrentActiveUser) -> AppUser:
-    if not current_user.role.name == Role.SUPER_ADMIN["name"]:
+    if not current_user.role_name == Role.SUPER_ADMIN["name"]:
         raise HTTPException(
             status_code=403, detail="The user doesn't have enough privileges"
         )

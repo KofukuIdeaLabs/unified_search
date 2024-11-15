@@ -16,14 +16,14 @@ def init_db(db: Session) -> None:
             name=Role.SUPER_ADMIN["name"],
             description=Role.SUPER_ADMIN["description"],
         )
-        crud.role.create(db, obj_in=super_admin_role_in)
+        super_admin_role = crud.role.create(db, obj_in=super_admin_role_in)
 
     admin_role = crud.role.get_by_name(db, name=Role.ADMIN["name"])
     if not admin_role:
         admin_role_in = schemas.RoleCreate(
             name=Role.ADMIN["name"], description=Role.ADMIN["description"]
         )
-        crud.role.create(db, obj_in=admin_role_in)
+        admin_role = crud.role.create(db, obj_in=admin_role_in)
 
     member_role = crud.role.get_by_name(db, name=Role.MEMBER["name"])
     if not member_role:
@@ -31,7 +31,7 @@ def init_db(db: Session) -> None:
             name=Role.MEMBER["name"],
             description=Role.MEMBER["description"],
         )
-        crud.role.create(db, obj_in=member_role_in)
+        member_role = crud.role.create(db, obj_in=member_role_in)
 
 
 

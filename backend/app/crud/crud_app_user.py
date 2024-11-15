@@ -17,7 +17,7 @@ class CRUDAppUser(CRUDBase[AppUser, AppUserCreate, AppUserUpdate]):
         return db.query(self.model).filter(AppUser.email == email).first()
     
     def get_with_roles(self, db: Session, *, id: UUID4) -> Optional[AppUser]:
-        return db.query(self.model.id,self.model.created_at,self.model.updated_at,self.model.email,self.model.full_name,self.model.is_active,self.model.org_id,Role.name).join(Role,Role.id == self.model.role_id).filter(self.model.id == id).first()
+        return db.query(self.model.id,self.model.created_at,self.model.updated_at,self.model.email,self.model.full_name,self.model.is_active,self.model.org_id,Role.name.label("role_name")).join(Role,Role.id == self.model.role_id).filter(self.model.id == id).first()
 
     def create(self, db: Session, *, obj_in: AppUserCreate) -> AppUser:
         if not obj_in.role_id:

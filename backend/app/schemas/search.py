@@ -51,4 +51,4 @@ class ListSearch(BaseModel):
         orm_mode = True
 
 class SearchId(BaseModel):
-    id:str
+    id:UUID4
