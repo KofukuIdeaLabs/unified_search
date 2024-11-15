@@ -63,3 +63,6 @@ class SearchId(BaseModel):
 class RecentSearch(BaseModel):
     id: UUID4
     search_text: str
+
+class SearchAutocomplete(BaseModel):
+    search_text: str

@@ -30,6 +30,7 @@ class SearchResultInDBBase(SearchResultBase):
     id: UUID4
     created_at: datetime
     updated_at: datetime
+    search_text: str
 
 
     class Config:

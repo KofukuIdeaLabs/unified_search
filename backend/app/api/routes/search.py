@@ -32,6 +32,7 @@ def create_search_term(
     print(meiliresults,"these are meilieresuts")
     search_result_in = schemas.SearchResultCreate(search_id=search.id,result=[{"table_name":"kp_employee","result_data":meiliresults}])
     search_result = crud.search_result.create(db=db,obj_in=search_result_in)
+    search_result.search_text = search_term
     return search_result
 
 
@@ -86,6 +87,24 @@ def get_search_result(
 #     search_result = crud.search_result.get(db=db,id=search_result_id)
 #     return search_result
 
+
+def extract_matched_values(data):
+    # List to store matched values
+    matched_values = []
+
+    # Loop through each dictionary in the data
+    for entry in data:
+        # Check if '_matchesPosition' key exists
+        if '_matchesPosition' in entry:
+            for column, positions in entry['_matchesPosition'].items():
+                # If the column is in the dictionary, extract its value
+                if column in entry:
+                    value = entry.get(column)
+                    if value not in matched_values:
+                        matched_values.append(value)
+    
+    return matched_values
+
 @router.get("/recent",response_model=List[schemas.RecentSearch]
             )
 def get_recent_searches(
@@ -93,3 +112,19 @@ def get_recent_searches(
     current_user: models.AppUser = Depends(deps.get_current_active_user)
 ):
     return crud.search.get_recent_searches(db=db,user_id=current_user.id)
+
+
+@router.get("/autocomplete")
+def get_autocomplete(
+    search_text:str,
+    db:Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user)
+):
+    results = crud.meilisearch.search(
+        search_query=search_text,
+        index_name="kp_employee"
+    )
+    if len(results) > 0:
+        return extract_matched_values(results)
+    else:
+        return []  # Raise exception

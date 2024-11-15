@@ -64,8 +64,10 @@ class CrudMeilisearch:
 
         return self.client.index(index_name).search(
             query=search_query,
-            opt_params={"limit": 10},
+            opt_params={"limit": 10,"showMatchesPosition": True},
         )["hits"]
+    
+
 
     def search_batch(
         self,
