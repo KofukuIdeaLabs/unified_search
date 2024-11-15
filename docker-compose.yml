@@ -62,8 +62,8 @@ services:
       - ENVIRONMENT=${ENVIRONMENT}
       - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
       - SECRET_KEY=${SECRET_KEY?Variable not set}
-      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
-      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - DEFAULT_SUPER_ADMIN_EMAIL=${DEFAULT_SUPER_ADMIN_EMAIL?Variable not set}
+      - DEFAULT_SUPER_ADMIN_PASSWORD=${DEFAULT_SUPER_ADMIN_PASSWORD?Variable not set}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
@@ -95,8 +95,8 @@ services:
       - ENVIRONMENT=${ENVIRONMENT}
       - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
       - SECRET_KEY=${SECRET_KEY?Variable not set}
-      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
-      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - DEFAULT_SUPER_ADMIN_EMAIL=${DEFAULT_SUPER_ADMIN_EMAIL?Variable not set}
+      - DEFAULT_SUPER_ADMIN_PASSWORD=${DEFAULT_SUPER_ADMIN_PASSWORD?Variable not set}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
@@ -135,8 +135,34 @@ services:
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.middlewares=https-redirect
     volumes:
       - ./backend/app:/app/app
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.8.1
+    restart: unless-stopped
+    ports:
+      - 7789:7700
+    volumes:
+      # - meilisearch-data:/meili_data/data.ms
+      - ./meili_data:/meili_data
+
+    env_file:
+      - .env
+
+
+  vectordb:
+    image: qdrant/qdrant:v1.2.2
+    #    mem_limit: 450m
+    restart: unless-stopped
+    ports:
+      - 6445:6333
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  
 volumes:
   db-data:
+  qdrant-data:
+  meilisearch-data:
 
 networks:
   traefik-public:

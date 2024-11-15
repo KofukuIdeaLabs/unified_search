@@ -55,6 +55,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "meilisearch" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "psycopg" },
     { name = "psycopg2-binary" },
@@ -63,6 +64,7 @@ dependencies = [
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "sentry-sdk", extra = ["fastapi"] },
+    { name = "sqlalchemy-json" },
     { name = "tenacity" },
 ]
 
@@ -85,6 +87,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.114.2,<1.0.0" },
     { name = "httpx", specifier = ">=0.25.1,<1.0.0" },
     { name = "jinja2", specifier = ">=3.1.4,<4.0.0" },
+    { name = "meilisearch", specifier = ">=0.31.6" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4,<2.0.0" },
     { name = "psycopg", specifier = ">=3.2.3" },
     { name = "psycopg2-binary", specifier = ">=2.9.3" },
@@ -93,6 +96,7 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.8.0,<3.0.0" },
     { name = "python-multipart", specifier = ">=0.0.7,<1.0.0" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=1.40.6,<2.0.0" },
+    { name = "sqlalchemy-json", specifier = ">=0.7.0" },
     { name = "tenacity", specifier = ">=8.2.3,<9.0.0" },
 ]
 
@@ -132,6 +136,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c3/38/a0f315319737ecf45b4319a8cd1f3a908e29d9277b46942263292115eee7/cachetools-5.5.0.tar.gz", hash = "sha256:2cc24fb4cbe39633fb7badd9db9ca6295d766d9c2995f245725a46715d050f2a", size = 27661 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/07/14f8ad37f2d12a5ce41206c21820d8cb6561b728e51fad4530dff0552a67/cachetools-5.5.0-py3-none-any.whl", hash = "sha256:02134e8439cdc2ffb62023ce1debca2944c3f289d66bb17ead3ab3dede74b292", size = 9524 },
+]
+
+[[package]]
+name = "camel-converter"
+version = "4.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/3d/dd783586dc0c4aee5b6b88489666fdb2c0c344ea0aa8a5c10746cc423707/camel_converter-4.0.1.tar.gz", hash = "sha256:401414549ae4ac4073e38cdc4aa6d464dc534fc40aa06ff787bf0960b0c86535", size = 38915 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/e5/806359514cc8305f047bd6d39d63890298c0596f7328b534059724bd1a9e/camel_converter-4.0.1-py3-none-any.whl", hash = "sha256:0cba7ca1354a29ca2191983deecc9dcf28889f606c28d6ed18ac7d4586b163ac", size = 6243 },
+]
+
+[package.optional-dependencies]
+pydantic = [
+    { name = "pydantic" },
 ]
 
 [[package]]
@@ -777,6 +795,19 @@ wheels = [
 ]
 
 [[package]]
+name = "meilisearch"
+version = "0.31.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "camel-converter", extra = ["pydantic"] },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/b3/c7ac76c8e664baac4eb5179b421a6ffb430a288738b5832f2ff47144c5df/meilisearch-0.31.6.tar.gz", hash = "sha256:cb0359da955c7e615534ddb48720027529fc176bf64d864e5d632779d531744e", size = 23184 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/18/e8ccfbfb71ba05237d8db6382fd56b58a72a47c208f356c662ed162f4dfe/meilisearch-0.31.6-py3-none-any.whl", hash = "sha256:ee353949868a8454b45233c9e01c6f609d0bf6096be88e07217cfba92ca59907", size = 23800 },
+]
+
+[[package]]
 name = "more-itertools"
 version = "10.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1288,6 +1319,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/95/81babb6089938680dfe2cd3f88cd3fd39cccd1543b7cb603b21ad881bff1/SQLAlchemy-2.0.36-cp313-cp313-win32.whl", hash = "sha256:0572f4bd6f94752167adfd7c1bed84f4b240ee6203a95e05d1e208d488d0d436", size = 2060439 },
     { url = "https://files.pythonhosted.org/packages/c1/ce/5f7428df55660d6879d0522adc73a3364970b5ef33ec17fa125c5dbcac1d/SQLAlchemy-2.0.36-cp313-cp313-win_amd64.whl", hash = "sha256:8c78ac40bde930c60e0f78b3cd184c580f89456dd87fc08f9e3ee3ce8765ce88", size = 2084574 },
     { url = "https://files.pythonhosted.org/packages/b8/49/21633706dd6feb14cd3f7935fc00b60870ea057686035e1a99ae6d9d9d53/SQLAlchemy-2.0.36-py3-none-any.whl", hash = "sha256:fddbe92b4760c6f5d48162aef14824add991aeda8ddadb3c31d56eb15ca69f8e", size = 1883787 },
+]
+
+[[package]]
+name = "sqlalchemy-json"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/57/73ba3d0ee5efbec5a0d15ee3e21606edd33b1d1fd11b5d64e581c8b8a3f6/sqlalchemy-json-0.7.0.tar.gz", hash = "sha256:620d0b26f648f21a8fa9127df66f55f83a5ab4ae010e5397a5c6989a08238561", size = 8848 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/79/1fc7309ecf75756e9ad9280f19cd83ca7b79a0dae36cd025f668e8e2741f/sqlalchemy_json-0.7.0-py3-none-any.whl", hash = "sha256:27881d662ca18363a4ac28175cc47ea2a6f2bef997ae1159c151026b741818e6", size = 7688 },
 ]
 
 [[package]]

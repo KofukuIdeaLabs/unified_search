@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     DEFAULT_ORGANIZATION_NAME: str
     DEFAULT_ORGANIZATION_DESCRIPTION: str
 
+    MEILI_MASTER_KEY: str
+
 
 
     BACKEND_CORS_ORIGINS: Annotated[
@@ -111,8 +113,7 @@ class Settings(BaseSettings):
     # TODO: update type to EmailStr when sqlmodel supports it
     EMAIL_TEST_USER: str = "test@example.com"
     # TODO: update type to EmailStr when sqlmodel supports it
-    FIRST_SUPERUSER: str
-    FIRST_SUPERUSER_PASSWORD: str
+
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
@@ -130,7 +131,7 @@ class Settings(BaseSettings):
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
         self._check_default_secret(
-            "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
+            "DEFAULT_SUPER_ADMIN_PASSWORD", self.DEFAULT_SUPER_ADMIN_PASSWORD
         )
 
         return self
