@@ -62,13 +62,6 @@ class CrudMeilisearch:
             if filter_type:
                 filter_queries.append(f"(unerth_object IN {filter_type})")
 
-            filter_query = " AND ".join(filter_queries)
-
-            # return filter_query
-
-        if index_name == "document_chunks":
-            filter_query = f"(doc_id IN {filter_ids})"
-
         return self.client.index(index_name).search(
             query=search_query,
             opt_params={"limit": 10},

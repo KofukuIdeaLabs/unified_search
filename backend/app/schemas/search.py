@@ -1,12 +1,17 @@
-from typing import Optional
+from typing import Optional,List
 from pydantic import UUID4, BaseModel
 from datetime import datetime
 
 
+class TableInput(BaseModel):
+    table_id: UUID4
+
+
 class SearchInput(BaseModel):
     search_text: str    
-    table_names: list[str]
-    db_name: str
+    db_id: UUID4
+    table_data: Optional[List[TableInput]] = None
+    row_limit: Optional[int] = 50
 
 # Shared properties
 class SearchBase(BaseModel):
@@ -18,6 +23,8 @@ class SearchBase(BaseModel):
 class SearchCreate(SearchBase):
     input_search: SearchInput
     search_type: str 
+    class Config:
+        extra = "allow"
 
 
 # Properties to receive via API on update
@@ -52,3 +59,7 @@ class ListSearch(BaseModel):
 
 class SearchId(BaseModel):
     id:UUID4
+
+class RecentSearch(BaseModel):
+    id: UUID4
+    search_text: str

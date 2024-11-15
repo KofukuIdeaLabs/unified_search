@@ -21,13 +21,16 @@ def create_search_term(
     """
     print(current_user.id,"this is the user id")
     search_in.search_type = constants.SearchType.TERM
-    search_in.model_dump().update({"user_id": current_user.id})
+    search_data = search_in.model_dump()
+    search_data["user_id"] = current_user.id
+    search_in = schemas.SearchCreate(**search_data)
+    print(search_in.model_dump(),"this is the search in")
     search = crud.search.create(db, obj_in=search_in)
-    table_names = search_in.input_search.table_names  
+    tables_data = search_in.input_search.table_data  
     search_term = search_in.input_search.search_text    
-    meiliresults = crud.meilisearch.search(index_name=table_names[0],search_query=search_term)
+    meiliresults = crud.meilisearch.search(index_name="kp_employee",search_query=search_term)
     print(meiliresults,"these are meilieresuts")
-    search_result_in = schemas.SearchResultCreate(search_id=search.id,result=[{"table_name":table_names[0],"result_data":meiliresults}])
+    search_result_in = schemas.SearchResultCreate(search_id=search.id,result=[{"table_name":"kp_employee","result_data":meiliresults}])
     search_result = crud.search_result.create(db=db,obj_in=search_result_in)
     return search_result
 
@@ -52,179 +55,41 @@ def create_search_query(
 
     try:
 
-        response = requests.post(url, json=search_in.dict())
+        data = search_in.model_dump()
+        data.pop('search_type', None)
+        response = requests.post(url, json=data)
         response.raise_for_status()  # Raises an HTTPError for bad status codes
-        print(response.text)
-        return response.json()
+        print(response.json(),"this is the response")
+        search_result_in = schemas.SearchResultCreate(search_id=search.id,extras={"external_search_id":response.json()})
+        search_result = crud.search_result.create(db=db,obj_in=search_result_in)
+        print(search_result.id,"this is the search result")
     except requests.exceptions.RequestException as e:
         print(f'An error occurred: {e}')
 
     return {"id":search.id}
 
-
-@router.post(
-    "/", dependencies=[Depends(deps.get_current_active_superuser)], response_model=schemas.AppUser
-)
-def create_user(*, db: Session = Depends(deps.get_db), user_in: schemas.AppUserCreate) -> Any:
-    """
-    Create new user.
-    """
-    user = crud.app_user.get_by_email(db, email=user_in.email)
-    if user:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system.",
-        )
-
-    user = crud.app_user.create(db, obj_in=user_in)
-    return user
+@router.get("/result/{search_id}",response_model=schemas.SearchResult)
+def get_search_result(
+    search_id:uuid.UUID,
+    db:Session = Depends(deps.get_db)
+):
+    
+    search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
+    return search_result
 
 
-@router.patch("/me", response_model=schemas.AppUser)
-def update_user_me(
-    *, db: Session = Depends(deps.get_db), user_in: schemas.AppUserUpdate, current_user: deps.CurrentActiveUser
-) -> Any:
-    """
-    Update own user.
-    """
+# @router.get("/result/{search_result_id}",response_model=schemas.SearchResult)
+# def get_search_result(
+#     search_result_id:uuid.UUID,
+#     db:Session = Depends(deps.get_db)
+# ):
+#     search_result = crud.search_result.get(db=db,id=search_result_id)
+#     return search_result
 
-    if user_in.email:
-        existing_user = crud.app_user.get_by_email(db, email=user_in.email)
-        if existing_user and existing_user.id != current_user.id:
-            raise HTTPException(
-                status_code=409, detail="User with this email already exists"
+@router.get("/recent",response_model=List[schemas.RecentSearch]
             )
-        
-    user = crud.app_user.update(db, db_obj=current_user, obj_in=user_in)
-    return user
-
-
-# @router.patch("/me/password", response_model=Message)
-# def update_password_me(
-#     *, session: SessionDep, body: UpdatePassword, current_user: CurrentUser
-# ) -> Any:
-#     """
-#     Update own password.
-#     """
-#     if not verify_password(body.current_password, current_user.hashed_password):
-#         raise HTTPException(status_code=400, detail="Incorrect password")
-#     if body.current_password == body.new_password:
-#         raise HTTPException(
-#             status_code=400, detail="New password cannot be the same as the current one"
-#         )
-#     hashed_password = get_password_hash(body.new_password)
-#     current_user.hashed_password = hashed_password
-#     session.add(current_user)
-#     session.commit()
-#     return Message(message="Password updated successfully")
-
-
-# @router.get("/me", response_model=UserPublic)
-# def read_user_me(current_user: CurrentUser) -> Any:
-#     """
-#     Get current user.
-#     """
-#     return current_user
-
-
-# @router.delete("/me", response_model=Message)
-# def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
-#     """
-#     Delete own user.
-#     """
-#     if current_user.is_superuser:
-#         raise HTTPException(
-#             status_code=403, detail="Super users are not allowed to delete themselves"
-#         )
-#     statement = delete(Item).where(col(Item.owner_id) == current_user.id)
-#     session.exec(statement)  # type: ignore
-#     session.delete(current_user)
-#     session.commit()
-#     return Message(message="User deleted successfully")
-
-
-# @router.post("/signup", response_model=UserPublic)
-# def register_user(session: SessionDep, user_in: UserRegister) -> Any:
-#     """
-#     Create new user without the need to be logged in.
-#     """
-#     user = crud.get_user_by_email(session=session, email=user_in.email)
-#     if user:
-#         raise HTTPException(
-#             status_code=400,
-#             detail="The user with this email already exists in the system",
-#         )
-#     user_create = UserCreate.model_validate(user_in)
-#     user = crud.create_user(session=session, user_create=user_create)
-#     return user
-
-
-# @router.get("/{user_id}", response_model=UserPublic)
-# def read_user_by_id(
-#     user_id: uuid.UUID, session: SessionDep, current_user: CurrentUser
-# ) -> Any:
-#     """
-#     Get a specific user by id.
-#     """
-#     user = session.get(User, user_id)
-#     if user == current_user:
-#         return user
-#     if not current_user.is_superuser:
-#         raise HTTPException(
-#             status_code=403,
-#             detail="The user doesn't have enough privileges",
-#         )
-#     return user
-
-
-# @router.patch(
-#     "/{user_id}",
-#     dependencies=[Depends(get_current_active_superuser)],
-#     response_model=UserPublic,
-# )
-# def update_user(
-#     *,
-#     session: SessionDep,
-#     user_id: uuid.UUID,
-#     user_in: UserUpdate,
-# ) -> Any:
-#     """
-#     Update a user.
-#     """
-
-#     db_user = session.get(User, user_id)
-#     if not db_user:
-#         raise HTTPException(
-#             status_code=404,
-#             detail="The user with this id does not exist in the system",
-#         )
-#     if user_in.email:
-#         existing_user = crud.get_user_by_email(session=session, email=user_in.email)
-#         if existing_user and existing_user.id != user_id:
-#             raise HTTPException(
-#                 status_code=409, detail="User with this email already exists"
-#             )
-
-#     db_user = crud.update_user(session=session, db_user=db_user, user_in=user_in)
-#     return db_user
-
-
-# @router.delete("/{user_id}", dependencies=[Depends(get_current_active_superuser)])
-# def delete_user(
-#     session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID
-# ) -> Message:
-#     """
-#     Delete a user.
-#     """
-#     user = session.get(User, user_id)
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#     if user == current_user:
-#         raise HTTPException(
-#             status_code=403, detail="Super users are not allowed to delete themselves"
-#         )
-#     statement = delete(Item).where(col(Item.owner_id) == user_id)
-#     session.exec(statement)  # type: ignore
-#     session.delete(user)
-#     session.commit()
-#     return Message(message="User deleted successfully")
+def get_recent_searches(
+    db:Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user)
+):
+    return crud.search.get_recent_searches(db=db,user_id=current_user.id)

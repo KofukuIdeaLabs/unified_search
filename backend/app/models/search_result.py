@@ -17,6 +17,7 @@ class SearchResult(Base):
     result = Column(mutable_json_type(dbtype=JSONB, nested=True), default={})
     rating = Column(Integer, default=0)
     is_satisfied = Column(Boolean, default=None)
+    extras = Column(mutable_json_type(dbtype=JSONB, nested=True), default={})
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     deleted_at = Column(DateTime, default=None)
