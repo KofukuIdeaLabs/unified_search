@@ -8,6 +8,7 @@ app = Celery("worker", broker=celeryconfig.broker_url)
 # celery_instance.conf.task_routes = {"celery_tasks": "main-queue4"}
 
 app.config_from_object(celeryconfig)
+app.autodiscover_tasks(packages=["app.celery_app.tasks"], force=True)
 # celery_instance.autodiscover_tasks(packages=["celery_tasks"], force=True)
 
 

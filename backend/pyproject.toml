@@ -22,7 +22,8 @@ dependencies = [
     "psycopg>=3.2.3",
     "sqlalchemy-json>=0.7.0",
     "meilisearch>=0.31.6",
-    "celery>=5.4.0",
+    "celery==5.3.4",
+    "sqlparse>=0.5.2",
 ]
 
 [tool.uv]

@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
 import requests
+from app.celery_app.tasks import run_sql_query
+from celery.result import AsyncResult
+from app.celery_app.celery import app
 router = APIRouter()
 
 
@@ -71,49 +74,92 @@ def create_search_query(
 
     return {"id":search.id}
 
-@router.get("/result/{search_id}",#response_model=schemas.SearchResult
-)
+@router.get("/result/{search_id}",response_model=schemas.SearchResult)
 def get_search_result(
-    search_id:uuid.UUID,
-    db:Session = Depends(deps.get_db)
+    search_id: uuid.UUID,
+    db: Session = Depends(deps.get_db)
 ):
-    # get the search result from the search id
-    search = crud.search.get(db=db,id=search_id)
+    """Get search results for a given search ID"""
+    # Get search and validate it exists
+    search = crud.search.get(db=db, id=search_id)
     if not search:
-        raise HTTPException(status_code=400, detail="Search not found")
-    # get the search result from the search id  
-    search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
+        raise HTTPException(status_code=404, detail="Search not found")
+
+    # Get search result and validate it exists
+    search_result = crud.search_result.get_by_column_first(
+        db=db,
+        filter_column="search_id", 
+        filter_value=search_id
+    )
     if not search_result:
-        raise HTTPException(status_code=400, detail="Search result not found")
+        raise HTTPException(status_code=404, detail="Search result not found")
+    
+    search_result.search_text = search.input_search["search_text"]
+
+    # Return immediately for term searches
     if search.search_type == constants.SearchType.TERM:
+        search_result.status = "success"
         return search_result
-    else:
-        print(search_result.id,"this is the search result extras")
-        print("running else")
-        if not search_result.result:
-            external_search_id = search_result.extras.get("external_search_id")
-            sql_queries = search_result.extras.get("sql_queries")
-            print(external_search_id,"this is the external search id")
-            if not external_search_id:
-                raise HTTPException(status_code=400, detail="No external search id found")
-            if not sql_queries:
-            
-                url = "{0}/api/v1/db_scaled/search/{1}".format(settings.BACKEND_BASE_URL,external_search_id)
 
-                headers = {
-                    'accept': 'application/json'
+    # Handle query searches
+    extras = search_result.extras or {}
+    external_search_id = extras.get("external_search_id")
+    if not external_search_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="External search ID not found"
+        )
+
+    sql_queries = extras.get("sql_queries")
+    task_id = extras.get("task_id")
+    print(task_id,"this is the task id")
+
+    # If no existing queries/task, fetch and start task
+    if not sql_queries or not task_id:
+        url = f"{settings.BACKEND_BASE_URL}/api/v1/db_scaled/search/{external_search_id}"
+        
+        try:
+            response = requests.get(url, headers={'accept': 'application/json'})
+            response.raise_for_status()
+            sql_queries = response.json()
+
+            if sql_queries:
+                # Start async task
+                sql_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
+                sql_queries = sql_queries[0]["sql_query"]
+                task = run_sql_query.apply_async(args=[search_result.id, sql_queries])
+                
+                # Update search result with new data
+                updated_extras = {
+                    "sql_queries": sql_queries,
+                    "external_search_id": external_search_id,
+                    "task_id": task.id
                 }
+                search_result = crud.search_result.update(
+                    db=db,
+                    db_obj=search_result,
+                    obj_in=schemas.SearchResultUpdate(extras=updated_extras)
+                )
+                search_result.status = "pending"
 
-                try:
-                    response = requests.get(url, headers=headers)
-                    response.raise_for_status()  # Raises an HTTPError for bad status codes
-                    print(response.json(),"this is the response")
-                    search_result_update_in = schemas.SearchResultUpdate(extras={"sql_queries":response.json(),"external_search_id":external_search_id})
-                    search_result = crud.search_result.update(db=db,db_obj=search_result,obj_in=search_result_update_in)
-                    return search_result
-                except requests.exceptions.RequestException as e:
-                    print(f'An error occurred: {e}')
-        return search_result
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to generate SQL queries: {str(e)}"
+            )
+
+    # Check task status if task exists
+    elif task_id:
+        result = AsyncResult(task_id,app=app)
+        search_result.status = result.state.lower()
+
+    return search_result
+
+    
+
+
+    
+
 
 
 

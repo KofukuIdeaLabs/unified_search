@@ -1,16 +1,83 @@
 from .celery import app
+from app.api import deps
+import time
+from app import crud, schemas,models
+import sqlparse
+from sqlparse.sql import Identifier, IdentifierList
+from sqlparse.tokens import Keyword, DML
+from sqlalchemy import text
+
+def extract_table_names(sql_query):
+    """
+    Extracts table names from a SQL query using sqlparse with improved handling for simple queries.
+    Handles case-insensitive 'FROM' keyword.
+    """
+    parsed = sqlparse.parse(sql_query)
+    table_names = []
+
+    for statement in parsed:
+        from_seen = False  # To track when we encounter the FROM keyword
+
+        for token in statement.tokens:
+            if from_seen:
+                # Handle single table names
+                if isinstance(token, Identifier):
+                    table_names.append(token.get_real_name())
+                    from_seen = False
+                # Handle multiple table names (comma-separated)
+                elif isinstance(token, IdentifierList):
+                    for identifier in token.get_identifiers():
+                        table_names.append(identifier.get_real_name())
+                    from_seen = False
+            elif token.ttype is Keyword and token.value.upper() == "FROM":
+                from_seen = True  # FROM keyword encountered
+
+    # Fallback for very simple queries (case-insensitive)
+    if not table_names:
+        tokens = sql_query.split()
+        lower_tokens = [token.lower() for token in tokens]
+        if "from" in lower_tokens:
+            index = lower_tokens.index("from")
+            if index + 1 < len(tokens):
+                table_names.append(tokens[index + 1])  # Preserve original case
+
+    return table_names
 
 
-@app.task
-def add(x, y):
-    return x + y
+@app.task(bind=True)
+def run_sql_query(self, search_result_id, query):
+    try:
+        db = next(deps.get_db())
+        # Simulate a time-consuming SQL task
+        print(f"Task {search_result_id}: Running query: {query}")
+        print(type(query),"this is the type of query")
+        # Execute SQL queries and collect results
+        results = []
+        for sql in query:
+            # Extract table name from query (assumes format "SELECT * FROM table_name WHERE...")
+            # Execute query and get results
+            print(sql,"this is the sql query")
+            query_result = [dict(row._mapping) for row in db.execute(text(sql)).fetchall()]
+            print(query_result,"this is the query result")
+            # Add to results in specified format
+            results.append({
+                "table_name": extract_table_names(sql),
+                "result_data": query_result
+            })
+        # run the sql query
+        # once the query is run, update the search result with the query result
+
+        print(results,"this is the results")
+      
+        search_result = crud.search_result.get(db=db, id=search_result_id)
+        search_result_update_in = schemas.SearchResultUpdate(result=results)
+        search_result = crud.search_result.update(db=db,db_obj=search_result,obj_in=search_result_update_in)
+        return True
+    except Exception as e:
+        print(e,"this is the error")
+        raise self.retry(exc=e)
 
 
-@app.task
-def mul(x, y):
-    return x * y
 
 
-@app.task
-def xsum(numbers):
-    return sum(numbers)
+

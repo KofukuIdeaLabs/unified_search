@@ -4,7 +4,7 @@ from datetime import datetime
 
 
 class SearchResultFormat(BaseModel):
-    table_name:str
+    table_name:List[str]
     result_data:List
 
 # Shared properties
@@ -31,6 +31,7 @@ class SearchResultInDBBase(SearchResultBase):
     created_at: datetime
     updated_at: datetime
     search_text: str
+    status: str
 
 
     class Config:
