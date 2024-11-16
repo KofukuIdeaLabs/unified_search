@@ -3,14 +3,13 @@ from pydantic import UUID4, BaseModel
 from datetime import datetime
 
 
-class TableInput(BaseModel):
-    table_id: UUID4
+
 
 
 class SearchInput(BaseModel):
     search_text: str    
     db_id: UUID4
-    table_data: Optional[List[TableInput]] = None
+    table_ids: Optional[List[UUID4]] = None
     row_limit: Optional[int] = 50
 
 # Shared properties

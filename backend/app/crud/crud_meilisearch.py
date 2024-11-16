@@ -64,9 +64,11 @@ class CrudMeilisearch:
 
         return self.client.index(index_name).search(
             query=search_query,
-            opt_params={"limit": 10,"showMatchesPosition": True},
+            opt_params={"limit": 10},
         )["hits"]
     
+    def search_autocomplete(self,search_query:str,index_name):
+        return self.client.index(index_name).search(query=search_query,opt_params={"limit": 10,"showMatchesPosition": True})["hits"]
 
 
     def search_batch(
