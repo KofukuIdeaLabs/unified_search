@@ -66,6 +66,7 @@ def create_search_query(
         data = search_in.model_dump()
         data.pop('search_type', None)
         data["input_search"]["db_id"] = str(search_in.input_search.db_id)
+        data["input_search"]["table_ids"] = [str(table_id) for table_id in search_in.input_search.table_ids]
         print(data,"this is the data")
         response = requests.post(url, json=data)
         response.raise_for_status()  # Raises an HTTPError for bad status codes
@@ -102,44 +103,52 @@ def query_on_data(
     except requests.exceptions.RequestException as e:
         print(f'An error occurred: {e}')
         raise HTTPException(status_code=400, detail=f"Failed to generate SQL queries: {str(e)}")
-@router.get("/download/result/{search_id}/{table_name}")
+@router.get("/download/result/{search_id}")
 def download_result(
     search_id: uuid.UUID,
-    table_name: str,
+    table_name: str | None = None,
     db: Session = Depends(deps.get_db),
     current_user: models.AppUser = Depends(deps.get_current_active_user),
 ):
-
     search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
     if not search_result:
         raise HTTPException(status_code=404,detail="Search result not found")
-    
-    # Find the matching result for the requested table_name
-    table_result = None
-    for result in search_result.result:
-        if result["table_name"] == table_name:
-            table_result = result["result_data"]
-            break
-            
-    if table_result is None:
-        raise HTTPException(status_code=404,detail="Table not found in search result")
-    
-    # Convert table_result to pandas DataFrame
-    df = pd.DataFrame(table_result)
-    
+
     # Create an in-memory buffer
     output = io.BytesIO()
     
-    # Write DataFrame to Excel file in memory
+    # Write DataFrame(s) to Excel file in memory
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, sheet_name=table_name, index=False)
+        if table_name:
+            # Find the matching result for the requested table_name
+            table_result = None
+            for result in search_result.result:
+                if result["table_name"] == table_name:
+                    table_result = result["result_data"]
+                    break
+                    
+            if table_result is None:
+                raise HTTPException(status_code=404,detail="Table not found in search result")
+            
+            # Convert table_result to pandas DataFrame and write to Excel
+            df = pd.DataFrame(table_result)
+            df.to_excel(writer, sheet_name=table_name, index=False)
+            filename = f"{table_name}.xlsx"
+        else:
+            # Write all tables as separate sheets
+            for result in search_result.result:
+                table_name = result["table_name"]
+                table_data = result["result_data"]
+                df = pd.DataFrame(table_data)
+                df.to_excel(writer, sheet_name=table_name, index=False)
+            filename = "search_results.xlsx"
     
     # Seek to start of buffer
     output.seek(0)
     
     # Return the Excel file as a streaming response
     headers = {
-        'Content-Disposition': f'attachment; filename="{table_name}.xlsx"'
+        'Content-Disposition': f'attachment; filename="{filename}"'
     }
     return StreamingResponse(
         output,
