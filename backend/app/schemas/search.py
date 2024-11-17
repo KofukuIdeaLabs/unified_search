@@ -6,6 +6,18 @@ from datetime import datetime
 
 
 
+class GenerateUserQueryInput(BaseModel):
+    data: dict
+
+
+class GenerateUserQueryOutput(BaseModel):
+    query: str
+
+
+
+
+
+
 class SearchInput(BaseModel):
     search_text: str    
     db_id: UUID4
@@ -24,6 +36,9 @@ class SearchCreate(SearchBase):
     search_type: str 
     class Config:
         extra = "allow"
+
+
+
 
 
 # Properties to receive via API on update
@@ -65,3 +80,14 @@ class RecentSearch(BaseModel):
 
 class SearchAutocomplete(BaseModel):
     search_text: str
+
+# class QueryOnData(BaseModel):
+#     data: dict
+#     original_user_query:str
+#     table_ids
+#     columns: List[str]
+#     table_name: str
+#     tables_to_query:List[dict]
+#     database_to_query: str
+#     row_limit: int
+#     original_query:str

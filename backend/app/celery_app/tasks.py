@@ -9,39 +9,35 @@ from sqlalchemy import text
 
 def extract_table_names(sql_query):
     """
-    Extracts table names from a SQL query using sqlparse with improved handling for simple queries.
+    Extracts the first table name from a SQL query using sqlparse.
     Handles case-insensitive 'FROM' keyword.
     """
     parsed = sqlparse.parse(sql_query)
-    table_names = []
-
+    
     for statement in parsed:
         from_seen = False  # To track when we encounter the FROM keyword
 
         for token in statement.tokens:
             if from_seen:
-                # Handle single table names
+                # Handle single table name
                 if isinstance(token, Identifier):
-                    table_names.append(token.get_real_name())
-                    from_seen = False
-                # Handle multiple table names (comma-separated)
+                    return token.get_real_name()
+                # Handle multiple table names (comma-separated) - take first one
                 elif isinstance(token, IdentifierList):
                     for identifier in token.get_identifiers():
-                        table_names.append(identifier.get_real_name())
-                    from_seen = False
+                        return identifier.get_real_name()
             elif token.ttype is Keyword and token.value.upper() == "FROM":
                 from_seen = True  # FROM keyword encountered
 
     # Fallback for very simple queries (case-insensitive)
-    if not table_names:
-        tokens = sql_query.split()
-        lower_tokens = [token.lower() for token in tokens]
-        if "from" in lower_tokens:
-            index = lower_tokens.index("from")
-            if index + 1 < len(tokens):
-                table_names.append(tokens[index + 1])  # Preserve original case
+    tokens = sql_query.split()
+    lower_tokens = [token.lower() for token in tokens]
+    if "from" in lower_tokens:
+        index = lower_tokens.index("from")
+        if index + 1 < len(tokens):
+            return tokens[index + 1]  # Return first table after FROM
 
-    return table_names
+    return None
 
 
 @app.task(bind=True)

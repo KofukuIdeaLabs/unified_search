@@ -10,6 +10,10 @@ import requests
 from app.celery_app.tasks import run_sql_query
 from celery.result import AsyncResult
 from app.celery_app.celery import app
+from fastapi.responses import StreamingResponse
+import pandas as pd
+import io
+
 router = APIRouter()
 
 
@@ -74,10 +78,83 @@ def create_search_query(
 
     return {"id":search.id}
 
+
+@router.post("/generate/user_query",response_model=schemas.GenerateUserQueryOutput)
+def query_on_data(
+    query_on_data_in: schemas.GenerateUserQueryInput,
+    db: Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user),
+):
+    try:
+        data = query_on_data_in.model_dump()
+        print(data,"this is the data")
+        url = "{0}/api/v1/db_scaled/generate/user_query".format(settings.BACKEND_BASE_URL)
+        headers = {
+            "accept": "application/json",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, headers=headers, json=data)
+
+        print(response.json(),"this is the response")
+        result = response.json()
+        return {"query":result.get("content")}
+    except requests.exceptions.RequestException as e:
+        print(f'An error occurred: {e}')
+        raise HTTPException(status_code=400, detail=f"Failed to generate SQL queries: {str(e)}")
+@router.get("/download/result/{search_id}/{table_name}")
+def download_result(
+    search_id: uuid.UUID,
+    table_name: str,
+    db: Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user),
+):
+
+    search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
+    if not search_result:
+        raise HTTPException(status_code=404,detail="Search result not found")
+    
+    # Find the matching result for the requested table_name
+    table_result = None
+    for result in search_result.result:
+        if result["table_name"] == table_name:
+            table_result = result["result_data"]
+            break
+            
+    if table_result is None:
+        raise HTTPException(status_code=404,detail="Table not found in search result")
+    
+    # Convert table_result to pandas DataFrame
+    df = pd.DataFrame(table_result)
+    
+    # Create an in-memory buffer
+    output = io.BytesIO()
+    
+    # Write DataFrame to Excel file in memory
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name=table_name, index=False)
+    
+    # Seek to start of buffer
+    output.seek(0)
+    
+    # Return the Excel file as a streaming response
+    headers = {
+        'Content-Disposition': f'attachment; filename="{table_name}.xlsx"'
+    }
+    return StreamingResponse(
+        output,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers=headers
+    )
+
+
+
+
 @router.get("/result/{search_id}",response_model=schemas.SearchResult)
 def get_search_result(
     search_id: uuid.UUID,
-    db: Session = Depends(deps.get_db)
+    db: Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user),
 ):
     """Get search results for a given search ID"""
     # Get search and validate it exists
@@ -204,3 +281,5 @@ def get_autocomplete(
         return extract_matched_values(results)
     else:
         return []  # Raise exception
+
+
