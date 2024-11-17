@@ -208,12 +208,17 @@ def get_search_result(
             response = requests.get(url, headers={'accept': 'application/json'})
             response.raise_for_status()
             sql_queries = response.json()
+            print(sql_queries,"this is the sql queries")
 
             if sql_queries:
                 # Start async task
-                sql_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
-                sql_queries = sql_queries[0]["sql_query"]
-                task = run_sql_query.apply_async(args=[search_result.id, sql_queries])
+                test_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
+                test_queries = test_queries[0]["sql_query"]
+                try:
+                    sql_queries = sql_queries.get("sql_query")
+                except:
+                    sql_queries = None
+                task = run_sql_query.apply_async(args=[search_result.id, test_queries])
                 
                 # Update search result with new data
                 updated_extras = {

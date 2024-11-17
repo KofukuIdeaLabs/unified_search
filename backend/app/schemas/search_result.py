@@ -31,7 +31,7 @@ class SearchResultInDBBase(SearchResultBase):
     created_at: datetime
     updated_at: datetime
     search_text: str
-    status: str
+    status: str = "pending"
 
 
     class Config:
