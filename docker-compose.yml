@@ -115,7 +115,7 @@ services:
       - ./backend/app:/app/app
       - ./logs:/app/logs
     links:
-      - rabbitmq
+      - unified_search_rabbitmq
 
   
 
@@ -141,14 +141,14 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
 
-  rabbitmq:
-    container_name: rabbitmq
+  unified_search_rabbitmq:
+    container_name: unified_search_rabbitmq
     image: rabbitmq:3.9.29-management-alpine
     env_file:
       - .env
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "5673:5672"
+      - "15673:15672"
     volumes:
       - rabbitmq-data:/data
 

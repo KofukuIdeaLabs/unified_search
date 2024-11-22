@@ -37,7 +37,7 @@ def create_search_term(
     search_term = search_in.input_search.search_text    
     meiliresults = crud.meilisearch.search(index_name="kp_employee",search_query=search_term)
     print(meiliresults,"these are meilieresuts")
-    search_result_in = schemas.SearchResultCreate(search_id=search.id,result=[{"table_name":"kp_employee","result_data":meiliresults}])
+    search_result_in = schemas.SearchResultCreate(search_id=search.id,result=[{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults}])
     search_result = crud.search_result.create(db=db,obj_in=search_result_in)
     search_result.search_text = search_term
     return {"id":search.id}

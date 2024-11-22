@@ -6,6 +6,7 @@ from app import crud,schemas,models
 from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
+import csv
 from app.core.security import get_password_hash, verify_password
 
 router = APIRouter()
@@ -67,3 +68,18 @@ def delete_indexed_table(indexed_table_id: UUID4,
         raise HTTPException(status_code=404, detail="Indexed table not found")
     indexed_table = crud.indexed_table.remove(db, indexed_table_id)
     return indexed_table
+
+
+@router.post("/data")
+def add_from_file(db: Session = Depends(deps.get_db), current_user: models.AppUser = Depends(deps.get_current_active_superuser)):
+    with open("app/files/tables.csv",mode='r') as csvfile:
+        csv_reader = csv.DictReader(csvfile)
+        for row in csv_reader:
+            print(row.get("id"),"this is id")
+            print(row.get("table"),"this is table")
+            indexed_table_in = schemas.IndexedTableCreate(id=row.get("id"),name=row.get("table"),db_id="d377ec7d-804f-4ba9-a3c8-245fdf37400e",description="string")
+            try:
+                indexed_table = crud.indexed_table.create(db, obj_in=indexed_table_in)
+            except Exception as e:
+                pass
+            print(indexed_table)    
