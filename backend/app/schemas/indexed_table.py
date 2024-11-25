@@ -6,15 +6,14 @@ from datetime import datetime
 
 # Shared properties
 class IndexedTableBase(BaseModel):
-    name: Optional[str]
-    description: Optional[str]
-    db_id: Optional[UUID4]
+    name: Optional[str] = None
+    description: Optional[str] = None
+    db_id: Optional[UUID4] = None
 
 
 # Properties to receive via API on creation
 class IndexedTableCreate(IndexedTableBase):
     name: str
-    description: str
     db_id: UUID4
 
 
