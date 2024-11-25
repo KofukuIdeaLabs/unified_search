@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     MEILI_MASTER_KEY: str
     BACKEND_BASE_URL:str 
-
+    OPENAI_API_KEY:str
 
 
     BACKEND_CORS_ORIGINS: Annotated[

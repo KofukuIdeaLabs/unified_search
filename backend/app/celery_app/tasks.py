@@ -16,6 +16,7 @@ import re
 import json
 import requests
 import os
+from app.utils.index_data import index_data
 
 def extract_table_names(sql_query):
     """
@@ -87,6 +88,9 @@ def run_sql_query(self, search_result_id, query):
 
 @app.task(bind=True, max_retries=3)
 def index_data_file(self, db_id: str, saved_files: List[dict]):
+    # i need to index in melisearch as it is for search
+    # as well as i need to generate table synonyms, column synonyms, table descriptions and column descriptions
+    # need to index table name, column name, column synonym, column description, table synonym, table description into meilisearch and vdb
     try:
         db = next(deps.get_db())
         for file_info in saved_files:
@@ -100,23 +104,72 @@ def index_data_file(self, db_id: str, saved_files: List[dict]):
                     df = pd.read_csv(file_path,encoding='utf-8')
                     # Replace NaN values with None before converting to dict
                     df = df.replace({np.nan: None})
-                    data = df.to_dict(orient='records')
-                    # extract the table name from the filename
                     table_name = filename.split(".")[0]
-                    # check if the table already exists
+
+                    db_name = crud.database.get(db=db,id=db_id).name
 
                     table = crud.indexed_table.get_table_by_name_and_db_id(db=db,name=table_name,db_id=db_id)
                     if not table:
-                        # create table from the name of the file
-                        table = crud.indexed_table.create(db=db,obj_in=schemas.IndexedTableCreate(name=table_name,db_id=db_id))
+                        table = crud.indexed_table.create(
+                            db=db,
+                            obj_in=schemas.IndexedTableCreate(
+                                name=table_name,
+                                db_id=db_id
+                            )
+                        )
+                    
+                    
+                    # Get column names and first 5 rows for metadata
+                    columns = df.columns.tolist()
+                    # Create a copy of first 5 rows and truncate long values
+                    sample_df = df.head(5).copy()
+                    for column in sample_df.columns:
+                        sample_df[column] = sample_df[column].apply(
+                            lambda x: str(x)[:100] + '...' if isinstance(x, str) and len(str(x)) > 100 else x
+                        )
+                    
+                    sample_data = sample_df.to_dict(orient='records')
+
+                    # generate table synonyms, column synonyms, table descriptions and column descriptions
+                    table_synonyms = index_data.generate_table_synonyms(table_name=table_name,column_names=columns,data=sample_data)
+                    column_synonyms = index_data.generate_column_synonyms(table_name=table_name,column_names=columns,data=sample_data)
+                    table_description = index_data.generate_table_descriptions(table_name=table_name,column_names=columns,data=sample_data)
+                    column_description = index_data.generate_column_descriptions(table_name=table_name,column_names=columns,data=sample_data)
+                    print(table_synonyms.table_synonyms,"this is the table synonyms")
+                    print(type(table_synonyms.table_synonyms),"this is the type of the table synonyms")
                     # index into the meilisearch
-                    # generate the unique id for each row
+                    unique_ids = [str(uuid.uuid4()) for _ in range(len(table_synonyms.table_synonyms))]
+                    table_synonyms_with_ids = []
+                    for i in range(len(table_synonyms.table_synonyms)):
+                        table_synonym = {
+                            "id": str(unique_ids[i]),
+                            "table_id": str(table.id),
+                            "synonym": table_synonyms.table_synonyms[i]
+                        }
+                        table_synonyms_with_ids.append(table_synonym)
+
+                    print(table_synonyms_with_ids,"this is the table synonyms to be indexed into meilisearch")
+                    crud.meilisearch.add_rows_to_index(index_name=f"{table_name}_synonyms",rows=table_synonyms_with_ids,primary_key="id")
+                    crud.meilisearch.add_rows_to_index(index_name=f"{table_name}_table",rows=[{"id": str(table.id), "table_name": table_name}],primary_key="id")
+                    # column_synonyms = index_data.generate_column_synonyms(table_name=table_name,column_names=columns,data=sample_data)
+                    # print(column_synonyms,"this is the column synonyms")
+                    # table_description = index_data.generate_table_descriptions(table_name=table_name,column_names=columns,data=sample_data)
+                    # print(table_description,"this is the table description")
+                    # column_description = index_data.generate_column_descriptions(table_name=table_name,column_names=columns,data=sample_data)
+                    # print(column_description,"this is the column description")
+                    print(table_name,"table synonyms indexed into meilisearch")
+
+                    
+                    # Continue with existing processing
+                    data = df.to_dict(orient='records')
+                    
+                    
+                    
                     unique_ids = [str(uuid.uuid4()) for _ in range(len(data))]
-                    # add the unique ids to the data
                     for i in range(len(data)):
                         data[i]["id"] = unique_ids[i]
-                    print(data,"this is the data for the csv file")
-                    crud.meilisearch.add_rows_to_index(index_name=table_name,rows=data,primary_key="id")
+                    
+                    crud.meilisearch.add_rows_to_index(index_name=f"{table_name}_data",rows=data,primary_key="id")
                 elif content_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
                     data = excel_file_parser.execute(file_path=file_path,is_csv=False)
                     data = data["dataframes"]
@@ -165,10 +218,109 @@ def index_data_file(self, db_id: str, saved_files: List[dict]):
     
     except Exception as e:
         print(f"Error processing files: {str(e)}")
-        raise self.retry(exc=e)
+        # raise self.retry(exc=e)
 
 @app.task
 def process_term_search(search_id: str, search_term: str, table_ids: List[str] = None, exact_match: bool = False):
+    """
+    Process a term search asynchronously
+    """
+    search_result = None
+    try:
+        db = next(deps.get_db())
+        
+        # For exact matching, wrap the search term in quotes
+        search_query = f'"{search_term}"' if exact_match else search_term
+        
+        if table_ids:
+            index_name = table_ids[0] if table_ids else "kp_employee"
+            meiliresults = crud.meilisearch.search(
+                index_name=index_name,
+                search_query=search_query
+            )
+        else:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {os.getenv("MEILISEARCH_API_KEY")}'
+            }
+            
+            try:
+                search_queries = []
+                indexes = crud.meilisearch.get_all_indexes()
+                
+                for index in indexes.get("results"):
+                    query = {
+                        'indexUid': index.uid,
+                        'q': search_query,
+                        'limit': 50,
+                        # Add exact match settings
+                        'matchingStrategy': 'all' if exact_match else 'last',
+                        'attributesToSearchOn': ['*']
+                    }
+                    search_queries.append(query)
+                
+                url = "http://meilisearch:7700/multi-search"
+                payload = json.dumps({
+                    "queries": search_queries
+                })
+
+                response = requests.request("POST", url, headers=headers, data=payload)
+                results = response.json()
+                
+                meiliresults = []
+                for result in results.get("results"):
+                    if not result.get("hits"):
+                        continue
+                    meiliresults.append({
+                        "table_name": result.get("indexUid"),
+                        "result_data": result.get("hits")
+                    })
+                
+            except Exception as e:
+                # Fallback to single index search
+                meiliresults = crud.meilisearch.search(
+                    index_name="kp_employee",
+                    search_query=search_query
+                )
+        
+        # Update the search result
+        search_result = crud.search_result.get_by_column_first(
+            db=db,
+            filter_column="search_id",
+            filter_value=search_id
+        )
+        
+        if search_result:
+            crud.search_result.update(
+                db=db,
+                db_obj=search_result,
+                obj_in=schemas.SearchResultUpdate(
+                    result=meiliresults,
+                    status="success",
+                    search_text=search_term
+                )
+            )
+            
+    except Exception as e:
+        # Update search result with error status
+        if search_result:
+            crud.search_result.update(
+                db=db,
+                db_obj=search_result,
+                obj_in=schemas.SearchResultUpdate(
+                    status="failed",
+                    extras={"error": str(e)}
+                )
+            )
+        raise
+        
+    finally:
+        db.close()
+
+
+
+@app.task
+def generate_metadata(search_id: str, search_term: str, table_ids: List[str] = None, exact_match: bool = False):
     """
     Process a term search asynchronously
     """

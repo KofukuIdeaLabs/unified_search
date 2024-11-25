@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from fastapi import UploadFile
 from pydantic import UUID4, BaseModel
 from datetime import datetime
@@ -38,4 +38,16 @@ class IndexDataInDB(IndexDataInDBBase):
     pass
 
 
+
+class TableSynonyms(BaseModel):
+    table_synonyms: List[str]
+
+class ColumnSynonyms(BaseModel):
+    column_synonyms: List[str]
+
+class TableDescription(BaseModel):
+    table_description: str
+
+class ColumnDescription(BaseModel):
+    column_description: str
 
