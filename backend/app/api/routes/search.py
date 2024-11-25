@@ -159,7 +159,7 @@ def download_result(
 
 
 
-@router.get("/result/{search_id}",response_model=schemas.SearchResult)
+@router.get("/result/{search_id}", response_model=schemas.SearchResult)
 def get_search_result(
     search_id: uuid.UUID,
     db: Session = Depends(deps.get_db),
@@ -191,40 +191,40 @@ def get_search_result(
     extras = search_result.extras or {}
     external_search_id = extras.get("external_search_id")
     if not external_search_id:
-        raise HTTPException(
-            status_code=400, 
-            detail="External search ID not found"
-        )
+        raise HTTPException(status_code=400, detail="External search ID not found")
 
     sql_queries = extras.get("sql_queries")
-    task_id = extras.get("task_id")
-    print(task_id,"this is the task id")
+    task_ids = extras.get("task_ids", [])
 
-    # If no existing queries/task, fetch and start task
-    if not sql_queries or not task_id:
+    # If no existing queries/tasks, fetch and start tasks
+    if not sql_queries or not task_ids:
         url = f"{settings.BACKEND_BASE_URL}/api/v1/db_scaled/search/{external_search_id}"
         
         try:
             response = requests.get(url, headers={'accept': 'application/json'})
             response.raise_for_status()
             sql_queries = response.json()
-            print(sql_queries,"this is the sql queries")
 
             if sql_queries:
-                # Start async task
+                # Start async tasks
                 test_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
                 test_queries = test_queries[0]["sql_query"]
                 try:
                     sql_queries = sql_queries.get("sql_query")
                 except:
                     sql_queries = None
-                task = run_sql_query.apply_async(args=[search_result.id, test_queries])
+
+                # Create a separate task for each query
+                task_ids = []
+                for query in test_queries:
+                    task = run_sql_query.apply_async(args=[search_result.id, [query]])
+                    task_ids.append(task.id)
                 
                 # Update search result with new data
                 updated_extras = {
                     "sql_queries": sql_queries,
                     "external_search_id": external_search_id,
-                    "task_id": task.id
+                    "task_ids": task_ids
                 }
                 search_result = crud.search_result.update(
                     db=db,
@@ -239,10 +239,24 @@ def get_search_result(
                 detail=f"Failed to generate SQL queries: {str(e)}"
             )
 
-    # Check task status if task exists
-    elif task_id:
-        result = AsyncResult(task_id,app=app)
-        search_result.status = result.state.lower()
+    # Check status of all tasks
+    elif task_ids:
+        all_completed = True
+        any_failed = False
+        
+        for task_id in task_ids:
+            result = AsyncResult(task_id, app=app)
+            if result.state.lower() not in ["success", "failed"]:
+                all_completed = False
+            if result.state.lower() == "failed":
+                any_failed = True
+        
+        if any_failed:
+            search_result.status = "failed"
+        elif all_completed:
+            search_result.status = "success"
+        else:
+            search_result.status = "pending"
 
     return search_result
 
