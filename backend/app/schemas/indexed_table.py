@@ -10,6 +10,7 @@ class IndexedTableBase(BaseModel):
     description: Optional[str] = None
     db_id: Optional[UUID4] = None
     synonyms: Optional[List[str]] = None
+    sample_data: Optional[List[dict]] = None
 
 
 # Properties to receive via API on creation

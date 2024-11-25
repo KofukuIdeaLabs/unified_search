@@ -104,19 +104,66 @@ def index_data_file(self, db_id: str, saved_files: List[dict]):
                     df = pd.read_csv(file_path,encoding='utf-8')
                     # Replace NaN values with None before converting to dict
                     df = df.replace({np.nan: None})
+                    
+                    # Get first 5 rows as sample data
+                    sample_df = df.head(5).copy()
+                    # Truncate long string values
+                    for column in sample_df.columns:
+                        sample_df[column] = sample_df[column].apply(
+                            lambda x: str(x)[:100] + '...' if isinstance(x, str) and len(str(x)) > 100 else x
+                        )
+                    sample_data = sample_df.to_dict(orient='records')
+                    
                     table_name = filename.split(".")[0]
-
-                    db_name = crud.database.get(db=db,id=db_id).name
-
                     table = crud.indexed_table.get_table_by_name_and_db_id(db=db,name=table_name,db_id=db_id)
                     if not table:
                         table = crud.indexed_table.create(
                             db=db,
                             obj_in=schemas.IndexedTableCreate(
                                 name=table_name,
-                                db_id=db_id
+                                db_id=db_id,
+                                sample_data=sample_data
                             )
                         )
+                    else:
+                        table = crud.indexed_table.update(
+                            db=db,
+                            db_obj=table,
+                            obj_in=schemas.IndexedTableUpdate(
+                                sample_data=sample_data
+                            )
+                        )
+
+                    # store the columns in the database
+                    for column in df.columns:
+                        # Get unique values and limit to 10
+                        unique_vals = df[column].unique().tolist()[:10]
+                        # Truncate long string values
+                        unique_vals = [
+                            str(val)[:100] + '...' if isinstance(val, str) and len(str(val)) > 100 
+                            else val 
+                            for val in unique_vals
+                        ]
+                        
+                        column_obj = crud.indexed_table_column.get_column_by_name_and_table_id(db=db, name=column, table_id=table.id)
+                        if not column_obj:
+                            column_obj = crud.indexed_table_column.create(
+                                db=db,
+                                obj_in=schemas.IndexedTableColumnCreate(
+                                    name=column,
+                                    table_id=table.id,
+                                    unique_values=unique_vals
+                                )
+                            )
+                        else:
+                            column_obj = crud.indexed_table_column.update(
+                                db=db,
+                                db_obj=column_obj,
+                                obj_in=schemas.IndexedTableColumnUpdate(
+                                    unique_values=unique_vals
+                                )
+                            )
+
                     
                     
                     # Get column names and first 5 rows for metadata
@@ -418,4 +465,241 @@ def generate_metadata(search_id: str, search_term: str, table_ids: List[str] = N
 
 
 
+
+
+@app.task(bind=True, max_retries=3)
+def generate_metadata(self, table_id: str):
+    """Generate metadata for parsed data and trigger indexing tasks"""
+    try:
+        db = next(deps.get_db())
+        
+        # Get table and validate
+        table = crud.indexed_table.get(db=db, id=table_id)
+        if not table:
+            raise ValueError(f"Table with id {table_id} not found")
+            
+        # Get columns and validate
+        columns = crud.indexed_table_column.get_columns_by_table_id(db=db, table_id=table_id)
+        if not columns:
+            raise ValueError(f"No columns found for table {table.name}")
+            
+        table_name = table.name
+        columns = [column[0] for column in columns]
+        sample_data = table.sample_data
+        table_synonyms = None
+        table_description = None
+        column_synonyms = None
+        column_description = None
+        
+
+        # Generate each metadata component independently
+        try:
+            table_synonyms = index_data.generate_table_synonyms(table_name, columns, sample_data)
+        except Exception as e:
+            print(f"Error generating table synonyms: {str(e)}")
+            # Continue with other components
+
+        try:
+            column_synonyms = index_data.generate_column_synonyms(table_name, columns, sample_data)
+        except Exception as e:
+            print(f"Error generating column synonyms: {str(e)}")
+            # Continue with other components
+
+        try:
+            table_description = index_data.generate_table_descriptions(table_name, columns, sample_data)
+        except Exception as e:
+            print(f"Error generating table description: {str(e)}")
+            # Continue with other components
+
+        try:
+            column_description = index_data.generate_column_descriptions(table_name, columns, sample_data)
+        except Exception as e:
+            print(f"Error generating column descriptions: {str(e)}")
+            # Continue with other components
+
+        # Trigger indexing tasks only for successfully generated components
+        if table_synonyms.table_synonyms:
+            index_table_synonyms.apply_async(
+                args=[table_data, table_synonyms.table_synonyms],
+                countdown=5  # 5 second delay before execution
+            )
+
+        if table_description.table_description:
+            index_table_description.apply_async(
+                args=[table_data, table_description.table_description],
+                countdown=5
+            )
+
+        # Index column metadata only if the respective components were generated
+        for column_name in columns:
+            column_metadata = {
+                'description': column_description.get(column_name, '') if column_description else '',
+                'synonyms': column_synonyms.get(column_name, []) if column_synonyms else []
+            }
+            
+            # Always index basic column data
+            index_column_data.apply_async(
+                args=[table_data, column_name],
+                countdown=5
+            )
+            
+            # Index additional metadata only if available
+            if column_metadata['synonyms']:
+                index_column_synonyms.apply_async(
+                    args=[table_data, column_name, column_metadata['synonyms']],
+                    countdown=5
+                )
+            if column_metadata['description']:
+                index_column_description.apply_async(
+                    args=[table_data, column_name, column_metadata['description']],
+                    countdown=5
+                )
+
+        return {
+            "status": "partial_success" if any(v is None for v in metadata.values()) else "success",
+            "message": "Metadata generation completed with some failures" if any(v is None for v in metadata.values()) else "All metadata generated successfully",
+            "table_name": table_name,
+            "generated_components": {k: "success" if v is not None else "failed" for k, v in metadata.items()}
+        }
+        
+    except Exception as e:
+        error_msg = f"Error in generate_metadata task: {str(e)}"
+        print(error_msg)
+        # Retry the task with exponential backoff
+        retry_in = (2 ** self.request.retries) * 60  # 60s, 120s, 240s
+        raise self.retry(exc=e, countdown=retry_in)
+        
+    finally:
+        db.close()
+
+@app.task
+def index_table_data(table_id: str,table_name: str):
+    """Index main table data to Meilisearch"""
+    try:
+        table_data = {
+            "id": table_id,
+            "table_name": table_name
+        }
+        
+        crud.meilisearch.add_rows_to_index(
+            index_name=f"{table_name}_table", 
+            rows=[table_data],
+            primary_key="id"
+        )
+        return {"status": "success", "table_name": table_name}
+    except Exception as e:
+        print(f"Error indexing table data: {str(e)}")
+        raise
+
+@app.task
+def index_table_synonyms(table_id: str,table_name: str,table_synonyms: list):
+    """Index table synonyms to Meilisearch"""
+    try:
+        
+        unique_ids = [str(uuid.uuid4()) for _ in range(len(table_synonyms))]
+        table_synonyms_with_ids = [
+            {
+                "id": str(uid),
+                "table_id": table_id,
+                "synonym": synonym
+            }
+            for uid, synonym in zip(unique_ids, table_synonyms)
+        ]
+        
+        crud.meilisearch.add_rows_to_index(
+            index_name=f"{table_name}_synonyms",
+            rows=table_synonyms_with_ids,
+            primary_key="id"
+        )
+        return {"status": "success", "table_name": table_name}
+    except Exception as e:
+        print(f"Error indexing table synonyms: {str(e)}")
+        raise
+
+@app.task
+def index_table_description(table_id: str,table_name: str,table_description: str):
+    """Index table description to Meilisearch"""
+    try:        
+        description_data = {
+            "id": str(uuid.uuid4()),
+            "table_id": table_id,
+            "description": table_description
+        }
+        
+        crud.meilisearch.add_rows_to_index(
+            index_name=f"{table_name}_description",
+            rows=[description_data],
+            primary_key="id"
+        )
+        return {"status": "success", "table_name": table_name}
+    except Exception as e:
+        print(f"Error indexing table description: {str(e)}")
+        raise
+
+@app.task
+def index_column(table_id: str, table_name: str, column_name: str, id: str):
+    """Index basic column data to Meilisearch"""
+    try:
+        column_data = {
+            "id": id,
+            "table_id": table_id, 
+            "column_name": column_name
+        }
+        
+        crud.meilisearch.add_rows_to_index(
+            index_name=f"{table_name}_columns",
+            rows=[column_data],
+            primary_key="id"
+        )
+        return {"status": "success", "table_name": table_name, "column_name": column_name}
+    except Exception as e:
+        print(f"Error indexing column data: {str(e)}")
+        raise
+
+@app.task 
+def index_column_synonyms(table_id: str, table_name: str, column_name: str, synonyms: list, column_id: str):
+    """Index column synonyms to Meilisearch"""
+    try:
+        unique_ids = [str(uuid.uuid4()) for _ in range(len(synonyms))]
+        synonym_data = [
+            {
+                "id": str(uid),
+                "table_id": table_id,
+                "synonym": synonym,
+                "column_id": column_id
+            }
+            for uid, synonym in zip(unique_ids, synonyms)
+        ]
+        
+        crud.meilisearch.add_rows_to_index(
+            index_name=f"{table_name}_column_synonyms",
+            rows=synonym_data,
+            primary_key="id"
+        )
+        return {"status": "success", "table_name": table_name, "column_name": column_name}
+    except Exception as e:
+        print(f"Error indexing column synonyms: {str(e)}")
+        raise
+
+@app.task
+def index_column_description(table_id: str, table_name: str, column_name: str, description: str, column_id: str):
+    """Index column description to Meilisearch"""
+    try:
+        description_data = {
+            "id": str(uuid.uuid4()),
+            "table_id": table_id,
+            "column_name": column_name,
+            "description": description,
+            "column_id": column_id
+        }
+        
+        crud.meilisearch.add_rows_to_index(
+            index_name=f"{table_name}_column_descriptions",
+            rows=[description_data],
+            primary_key="id"
+        )
+        return {"status": "success", "table_name": table_name, "column_name": column_name}
+    except Exception as e:
+        print(f"Error indexing column description: {str(e)}")
+        raise
 

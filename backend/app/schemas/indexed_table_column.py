@@ -8,7 +8,7 @@ from datetime import datetime
 class IndexedTableColumnBase(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    db_id: Optional[UUID4] = None
+    table_id: Optional[UUID4] = None
     synonyms: Optional[List[str]] = None
     unique_values: Optional[Any] = None
 
@@ -16,7 +16,7 @@ class IndexedTableColumnBase(BaseModel):
 # Properties to receive via API on creation
 class IndexedTableColumnCreate(IndexedTableColumnBase):
     name: str
-    db_id: UUID4
+    table_id: UUID4
 
 
 # Properties to receive via API on update

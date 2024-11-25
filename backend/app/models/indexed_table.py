@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 import datetime
 from uuid import uuid4
 from app.db.base_class import Base
@@ -23,6 +23,7 @@ class IndexedTable(Base):
     description = Column(String)
     synonyms = Column(ARRAY(String))
     db_id = Column(UUID(as_uuid=True), ForeignKey("indexed_db.id"))
+    sample_data = Column(ARRAY(JSONB))
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
