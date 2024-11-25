@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 import datetime
 from uuid import uuid4
 from app.db.base_class import Base
@@ -9,8 +9,8 @@ if TYPE_CHECKING:
     pass
 
 
-class IndexedTable(Base):
-    __tablename__ = "indexed_table"
+class IndexedTableColumn(Base):
+    __tablename__ = "indexed_table_column"
 
 
     id = Column(
@@ -22,7 +22,8 @@ class IndexedTable(Base):
     name = Column(String, index=True)
     description = Column(String)
     synonyms = Column(ARRAY(String))
-    db_id = Column(UUID(as_uuid=True), ForeignKey("indexed_db.id"))
+    unique_values = Column(JSONB)
+    table_id = Column(UUID(as_uuid=True), ForeignKey("indexed_table.id"))
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow

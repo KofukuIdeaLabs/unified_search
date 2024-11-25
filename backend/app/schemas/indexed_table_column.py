@@ -1,29 +1,30 @@
-from typing import Optional,List
+from typing import Optional,List,Any
 
 from pydantic import UUID4, BaseModel
 from datetime import datetime
 
 
 # Shared properties
-class IndexedTableBase(BaseModel):
+class IndexedTableColumnBase(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     db_id: Optional[UUID4] = None
     synonyms: Optional[List[str]] = None
+    unique_values: Optional[Any] = None
 
 
 # Properties to receive via API on creation
-class IndexedTableCreate(IndexedTableBase):
+class IndexedTableColumnCreate(IndexedTableColumnBase):
     name: str
     db_id: UUID4
 
 
 # Properties to receive via API on update
-class IndexedTableUpdate(IndexedTableBase):
+class IndexedTableColumnUpdate(IndexedTableColumnBase):
     pass
 
 
-class IndexedTableInDBBase(IndexedTableBase):
+class IndexedTableColumnInDBBase(IndexedTableColumnBase):
     id: UUID4
     created_at: datetime
     updated_at: datetime
@@ -33,11 +34,11 @@ class IndexedTableInDBBase(IndexedTableBase):
 
 
 # Additional properties to return via API
-class IndexedTable(IndexedTableInDBBase):
+class IndexedTableColumn(IndexedTableColumnInDBBase):
     pass
 
 
-class IndexedTableInDB(IndexedTableInDBBase):
+class IndexedTableColumnInDB(IndexedTableColumnInDBBase):
     pass
 
 

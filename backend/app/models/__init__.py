@@ -5,3 +5,4 @@ from .search import Search
 from .search_result import SearchResult
 from .indexed_db import IndexedDB
 from .indexed_table import IndexedTable
+from .indexed_table_column import IndexedTableColumn

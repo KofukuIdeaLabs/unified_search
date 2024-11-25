@@ -6,3 +6,4 @@ from .crud_search import search
 from .crud_search_result import search_result
 from .crud_indexed_db import indexed_db
 from .crud_indexed_table import indexed_table
+from .crud_indexed_table_column import indexed_table_column
