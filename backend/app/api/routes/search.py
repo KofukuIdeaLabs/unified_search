@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
 import requests
-from app.celery_app.tasks import run_sql_query
+from app.celery_app.tasks import run_sql_query,process_term_search
 from celery.result import AsyncResult
 from app.celery_app.celery import app
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
+
 
 router = APIRouter()
 
@@ -24,23 +25,38 @@ def create_search_term(
     current_user: models.AppUser = Depends(deps.get_current_active_user),
 ) -> Any:
     """
-    Create a search.
+    Create a search and queue it for async processing.
     """
-    print(current_user.id,"this is the user id")
+    # Set up the search record
     search_in.search_type = constants.SearchType.TERM
     search_data = search_in.model_dump()
     search_data["user_id"] = current_user.id
     search_in = schemas.SearchCreate(**search_data)
-    print(search_in.model_dump(),"this is the search in")
     search = crud.search.create(db, obj_in=search_in)
-    table_ids = search_in.input_search.table_ids  
-    search_term = search_in.input_search.search_text    
-    meiliresults = crud.meilisearch.search(index_name="kp_employee",search_query=search_term)
-    print(meiliresults,"these are meilieresuts")
-    search_result_in = schemas.SearchResultCreate(search_id=search.id,result=[{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults},{"table_name":"kp_employee","result_data":meiliresults}])
-    search_result = crud.search_result.create(db=db,obj_in=search_result_in)
-    search_result.search_text = search_term
-    return {"id":search.id}
+    
+    # Create initial search result with pending status
+    search_result_in = schemas.SearchResultCreate(
+        search_id=search.id
+    )
+    search_result = crud.search_result.create(db=db, obj_in=search_result_in)
+    
+    # Queue the search task
+    task = process_term_search.apply_async(args=[
+        str(search.id),
+        search_in.input_search.search_text,
+        search_in.input_search.table_ids if search_in.input_search.table_ids else None
+    ])
+    
+    # Update search result with task ID
+    crud.search_result.update(
+        db=db,
+        db_obj=search_result,
+        obj_in=schemas.SearchResultUpdate(
+            extras={"task_id": task.id}
+        )
+    )
+    
+    return {"id": search.id}
 
 
 @router.post("/query", response_model=schemas.SearchId
