@@ -6,6 +6,13 @@ import sqlparse
 from sqlparse.sql import Identifier, IdentifierList
 from sqlparse.tokens import Keyword, DML
 from sqlalchemy import text
+from pathlib import Path
+from typing import List
+import uuid
+import pandas as pd
+import numpy as np
+from app.utils.excel_parser import excel_file_parser
+import re
 
 def extract_table_names(sql_query):
     """
@@ -73,6 +80,87 @@ def run_sql_query(self, search_result_id, query):
         print(e,"this is the error")
         raise self.retry(exc=e)
 
+@app.task(bind=True, max_retries=3)
+def index_data_file(self, db_id: str, saved_files: List[dict]):
+    try:
+        db = next(deps.get_db())
+        for file_info in saved_files:
+            file_path = Path(file_info["path"])
+            content_type = file_info["content_type"]
+            filename = file_info["filename"]
+            
+            try:
+                # Handle different content types appropriately
+                if content_type == "text/csv":
+                    df = pd.read_csv(file_path,encoding='utf-8')
+                    # Replace NaN values with None before converting to dict
+                    df = df.replace({np.nan: None})
+                    data = df.to_dict(orient='records')
+                    # extract the table name from the filename
+                    table_name = filename.split(".")[0]
+                    # check if the table already exists
+
+                    table = crud.indexed_table.get_table_by_name_and_db_id(db=db,name=table_name,db_id=db_id)
+                    if not table:
+                        # create table from the name of the file
+                        table = crud.indexed_table.create(db=db,obj_in=schemas.IndexedTableCreate(name=table_name,db_id=db_id))
+                    # index into the meilisearch
+                    # generate the unique id for each row
+                    unique_ids = [str(uuid.uuid4()) for _ in range(len(data))]
+                    # add the unique ids to the data
+                    for i in range(len(data)):
+                        data[i]["id"] = unique_ids[i]
+                    print(data,"this is the data for the csv file")
+                    crud.meilisearch.add_rows_to_index(index_name=table_name,rows=data,primary_key="id")
+                elif content_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+                    data = excel_file_parser.execute(file_path=file_path,is_csv=False)
+                    data = data["dataframes"]
+                    for sheet_name,df_dict in data.items():
+                        for table_name,df in df_dict.items():
+                            print(table_name,"this is the table name")
+                            print(df,"this is the dataframe")
+                            print(sheet_name,"this is the sheet name")
+                            # Sanitize the table name for Meilisearch
+                            sanitized_filename = filename.split(".")[0].replace(" ", "_")
+                            index_name = f"{table_name}_{sheet_name}_{sanitized_filename}"
+                            # Replace any remaining invalid characters
+                            index_name = re.sub(r'[^a-zA-Z0-9_-]', '_', index_name)
+                            
+                            # check if the table already exists
+                            table = crud.indexed_table.get_table_by_name_and_db_id(db=db,name=index_name,db_id=db_id)
+                            if not table:
+                                # create table from the name of the file
+                                table = crud.indexed_table.create(db=db,obj_in=schemas.IndexedTableCreate(name=index_name,db_id=db_id))
+                            
+                            # index into the meilisearch
+                            # generate the unique id for each row
+                            unique_ids = [str(uuid.uuid4()) for _ in range(len(df))]
+                            # add the unique ids to the data using loc accessor
+                            df.loc[:, 'id'] = unique_ids
+                            # Convert DataFrame to records for meilisearch
+                            df = df.replace({np.nan: None})
+                            records = df.to_dict('records')
+                            print(records,"this is the records")
+                    crud.meilisearch.add_rows_to_index(index_name=index_name,rows=records,primary_key="id")
+                else:
+                    raise ValueError(f"File type {content_type} is not supported. Only CSV and Excel files are supported.")
+            except Exception as e:
+                print(f"Error processing file {filename}: {str(e)}")
+                if self.request.retries >= self.max_retries - 1:  # If this is the last retry
+                    # Delete the file even if processing failed after all retries
+                    if file_path.exists():
+                        file_path.unlink()
+                raise  # Re-raise the exception for retry handling
+            else:
+                # Delete file after successful processing
+                if file_path.exists():
+                    file_path.unlink()
+        
+        return {"status": "success"}
+    
+    except Exception as e:
+        print(f"Error processing files: {str(e)}")
+        raise self.retry(exc=e)
 
 
 

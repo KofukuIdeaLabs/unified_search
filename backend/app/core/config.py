@@ -137,5 +137,7 @@ class Settings(BaseSettings):
 
         return self
 
+    UPLOAD_DIR: str = "/storage"  # or wherever you want to store temp files
+
 
 settings = Settings()  # type: ignore

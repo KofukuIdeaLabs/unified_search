@@ -9,3 +9,4 @@ node_modules/
 meili_data/
 *.logs
 **/logs/
+data/

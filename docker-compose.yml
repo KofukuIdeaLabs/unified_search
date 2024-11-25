@@ -95,7 +95,7 @@ services:
       context: ./backend
     volumes:
       - ./backend/app:/app/app
-
+      - shared-storage:/storage
   celery_worker:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
@@ -114,6 +114,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./logs:/app/logs
+      - shared-storage:/storage
     links:
       - unified_search_rabbitmq
 
@@ -150,13 +151,13 @@ services:
       - "5673:5672"
       - "15673:15672"
     volumes:
-      - rabbitmq-data:/data
+      - rabbitmq-data1:/data
 
   
 volumes:
   db-data:
   qdrant-data:
   meilisearch-data:
-  rabbitmq-data:
-
+  rabbitmq-data1:
+  shared-storage:
 
