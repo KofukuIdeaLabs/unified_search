@@ -168,28 +168,29 @@ def index_data_file(self, db_id: str, saved_files: List[dict]):
         raise self.retry(exc=e)
 
 @app.task
-def process_term_search(search_id: str, search_term: str, table_ids: List[str] = None):
+def process_term_search(search_id: str, search_term: str, table_ids: List[str] = None, exact_match: bool = False):
     """
     Process a term search asynchronously
     """
-    search_result = None  # Define outside try block
+    search_result = None
     try:
         db = next(deps.get_db())
         
+        # For exact matching, wrap the search term in quotes
+        search_query = f'"{search_term}"' if exact_match else search_term
+        
         if table_ids:
-            # Use the first table_id instead of hardcoded value
             index_name = table_ids[0] if table_ids else "kp_employee"
             meiliresults = crud.meilisearch.search(
                 index_name=index_name,
-                search_query=search_term
+                search_query=search_query
             )
         else:
-            # Move API token to environment variable
             headers = {
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {os.getenv("MEILISEARCH_API_KEY")}'
             }
-            # Multi-index search
+            
             try:
                 search_queries = []
                 indexes = crud.meilisearch.get_all_indexes()
@@ -197,8 +198,11 @@ def process_term_search(search_id: str, search_term: str, table_ids: List[str] =
                 for index in indexes.get("results"):
                     query = {
                         'indexUid': index.uid,
-                        'q': search_term,
-                        'limit': 50
+                        'q': search_query,
+                        'limit': 50,
+                        # Add exact match settings
+                        'matchingStrategy': 'all' if exact_match else 'last',
+                        'attributesToSearchOn': ['*']
                     }
                     search_queries.append(query)
                 
@@ -223,7 +227,7 @@ def process_term_search(search_id: str, search_term: str, table_ids: List[str] =
                 # Fallback to single index search
                 meiliresults = crud.meilisearch.search(
                     index_name="kp_employee",
-                    search_query=search_term
+                    search_query=search_query
                 )
         
         # Update the search result
