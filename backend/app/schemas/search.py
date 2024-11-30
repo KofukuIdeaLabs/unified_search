@@ -23,13 +23,13 @@ class SearchInput(BaseModel):
     db_id: UUID4
     table_ids: Optional[List[UUID4]] = None
     row_limit: Optional[int] = 50
+    exact_match: Optional[bool] = False
+    optimize_search: Optional[bool] = False
 
 # Shared properties
 class SearchBase(BaseModel):
     input_search: Optional[SearchInput]
     search_type: Optional[str]
-    exact_match: Optional[bool] = False
-    optimize_search: Optional[bool] = False
 
 # Properties to receive via API on creation
 class SearchCreate(SearchBase):

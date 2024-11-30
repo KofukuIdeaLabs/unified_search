@@ -19,6 +19,9 @@ class CrudMeilisearch:
     def get_index(self, index_name):
         return self.client.get_index(index_name)
 
+    def get_all_indexes(self):
+        return self.client.get_indexes()
+
     def create_index(self, index_name: str,primary_key="id"):
         print(index_name,primary_key,"this is the data")
         return self.client.create_index(index_name, {"primaryKey": primary_key})

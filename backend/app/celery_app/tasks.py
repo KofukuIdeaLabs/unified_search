@@ -18,6 +18,8 @@ import requests
 import os
 from app.utils.index_data import index_data
 from abc import ABC, abstractmethod
+from app.core.security import settings
+from typing import List
 
 def extract_table_names(sql_query):
     """
@@ -88,100 +90,104 @@ def run_sql_query(self, search_result_id, query):
         raise self.retry(exc=e)
     
 
+def _build_search_query(search_term: str, exact_match: bool) -> str:
+    """Build the search query string with exact match handling"""
+    return f'"{search_term}"' if exact_match else search_term
+
+def _create_query_dict(index_uid: str, search_query: str, exact_match: bool) -> dict:
+    """Create a single query dictionary for Meilisearch"""
+    return {
+        'indexUid': index_uid,
+        'q': search_query,
+        'limit': 50,
+        'matchingStrategy': 'all' if exact_match else 'last',
+        'attributesToSearchOn': ['*']
+    }
+
+def _get_meilisearch_headers() -> dict:
+    """Get headers for Meilisearch API requests"""
+    return {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {settings.MEILI_MASTER_KEY}'
+    }
+
+def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dict]:
+    """Execute multi-search request to Meilisearch"""
+    url = "http://meilisearch:7700/multi-search"
+    payload = json.dumps({"queries": search_queries})
+    
+    response = requests.request("POST", url, headers=headers, data=payload)
+    results = response.json()
+    
+    meiliresults = []
+    for result in results.get("results", []):
+        if not result.get("hits"):
+            continue
+        meiliresults.append({
+            "table_name": result.get("indexUid"),
+            "result_data": result.get("hits"),
+        })
+    return meiliresults
+
+def _update_search_result(db, search_result, meiliresults: List[dict], search_term: str, error: str = None):
+    """Update the search result in the database"""
+    if not search_result:
+        return
+        
+    if error:
+        update_data = schemas.SearchResultUpdate(
+            status="failed",
+            extras={"error": error}
+        )
+    else:
+        update_data = schemas.SearchResultUpdate(
+            result=meiliresults,
+            status="success",
+            search_text=search_term
+        )
+    
+    crud.search_result.update(
+        db=db,
+        db_obj=search_result,
+        obj_in=update_data
+    )
+
 @app.task
 def process_term_search(search_id: str, search_term: str, table_ids: List[str] = None, exact_match: bool = False):
-    """
-    Process a term search asynchronously
-    """
+    """Process a term search asynchronously"""
     search_result = None
+    db = next(deps.get_db())
+    
     try:
-        db = next(deps.get_db())
-        
-        # For exact matching, wrap the search term in quotes
-        search_query = f'"{search_term}"' if exact_match else search_term
-        
-        if table_ids:
-            index_name = table_ids[0] if table_ids else "kp_employee"
-            meiliresults = crud.meilisearch.search(
-                index_name=index_name,
-                search_query=search_query
-            )
-        else:
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {os.getenv("MEILISEARCH_API_KEY")}'
-            }
-            
-            try:
-                search_queries = []
-                indexes = crud.meilisearch.get_all_indexes()
-                
-                for index in indexes.get("results"):
-                    query = {
-                        'indexUid': index.uid,
-                        'q': search_query,
-                        'limit': 50,
-                        # Add exact match settings
-                        'matchingStrategy': 'all' if exact_match else 'last',
-                        'attributesToSearchOn': ['*']
-                    }
-                    search_queries.append(query)
-                
-                url = "http://meilisearch:7700/multi-search"
-                payload = json.dumps({
-                    "queries": search_queries
-                })
+        search_query = _build_search_query(search_term, exact_match)
+        headers = _get_meilisearch_headers()
+        search_queries = []
 
-                response = requests.request("POST", url, headers=headers, data=payload)
-                results = response.json()
-                
-                meiliresults = []
-                for result in results.get("results"):
-                    if not result.get("hits"):
-                        continue
-                    meiliresults.append({
-                        "table_name": result.get("indexUid"),
-                        "result_data": result.get("hits")
-                    })
-                
-            except Exception as e:
-                # Fallback to single index search
-                meiliresults = crud.meilisearch.search(
-                    index_name="kp_employee",
-                    search_query=search_query
-                )
+        if table_ids:
+            # Search specific tables
+            tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
+            for table in tables:
+                search_queries.append(_create_query_dict(table.name, search_query, exact_match))
+        else:
+            # Search all indexes
+            indexes = crud.meilisearch.get_all_indexes()
+            for index in indexes.get("results", []):
+                search_queries.append(_create_query_dict(index.uid, search_query, exact_match))
+
+        meiliresults = _execute_multi_search(search_queries, headers)
         
-        # Update the search result
+        # Get and update search result
         search_result = crud.search_result.get_by_column_first(
             db=db,
             filter_column="search_id",
             filter_value=search_id
         )
-        
-        if search_result:
-            crud.search_result.update(
-                db=db,
-                db_obj=search_result,
-                obj_in=schemas.SearchResultUpdate(
-                    result=meiliresults,
-                    status="success",
-                    search_text=search_term
-                )
-            )
+        _update_search_result(db, search_result, meiliresults, search_term)
             
     except Exception as e:
-        # Update search result with error status
-        if search_result:
-            crud.search_result.update(
-                db=db,
-                db_obj=search_result,
-                obj_in=schemas.SearchResultUpdate(
-                    status="failed",
-                    extras={"error": str(e)}
-                )
-            )
+        _update_search_result(db, search_result, [], search_term, str(e))
         raise
-        
+    
     finally:
         db.close()
 

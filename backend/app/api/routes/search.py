@@ -31,7 +31,8 @@ def create_search_term(
     search_in.search_type = constants.SearchType.TERM
     search_data = search_in.model_dump()
     search_data["user_id"] = current_user.id
-    exact_match = search_in.exact_match
+    exact_match = search_in.input_search.exact_match
+    optimize_search = search_in.input_search.optimize_search
     search_in = schemas.SearchCreate(**search_data)
     search = crud.search.create(db, obj_in=search_in)
     
