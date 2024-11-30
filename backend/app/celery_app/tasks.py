@@ -129,7 +129,7 @@ def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dic
         })
     return meiliresults
 
-def _update_search_result(db, search_result, meiliresults: List[dict], search_term: str, error: str = None):
+def _update_search_result(db, search_result, meiliresults: List[dict], search_term: str, exact_match: bool,table_ids: List[str] = None,error: str = None):
     """Update the search result in the database"""
     if not search_result:
         return
@@ -143,7 +143,8 @@ def _update_search_result(db, search_result, meiliresults: List[dict], search_te
         update_data = schemas.SearchResultUpdate(
             result=meiliresults,
             status="success",
-            search_text=search_term
+            search_text=search_term,
+            extras={**(search_result.extras or {}), "exact_match": exact_match, "table_ids": table_ids}
         )
     
     crud.search_result.update(
@@ -182,7 +183,7 @@ def process_term_search(search_id: str, search_term: str, table_ids: List[str] =
             filter_column="search_id",
             filter_value=search_id
         )
-        _update_search_result(db, search_result, meiliresults, search_term)
+        _update_search_result(db, search_result, meiliresults, search_term,exact_match,table_ids)
             
     except Exception as e:
         _update_search_result(db, search_result, [], search_term, str(e))
