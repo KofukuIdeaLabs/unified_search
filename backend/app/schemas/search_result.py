@@ -1,5 +1,5 @@
-from typing import Optional,List
-from pydantic import UUID4, BaseModel
+from typing import Optional,List,Dict,Any
+from pydantic import UUID4, BaseModel,Field
 from datetime import datetime
 
 
@@ -13,7 +13,11 @@ class SearchResultBase(BaseModel):
     rating: Optional[int]=None
     is_satisfied: Optional[bool]=None
     search_id: Optional[UUID4]=None
-    extras: Optional[dict] = None # right now the architecute is in between the old and new project so need to add extra data here
+    extras: Optional[Dict[str, Any]] = Field(
+        default=None, 
+        description="Additional data including pagination info"
+    )
+
 
 
 # Properties to receive via API on creation
@@ -25,6 +29,11 @@ class SearchResultCreate(SearchResultBase):
 class SearchResultUpdate(SearchResultBase):
     pass
 
+class PaginationInfo(BaseModel):
+    offset: int
+    limit: int
+    total_hits: Optional[int] = None
+
 
 class SearchResultInDBBase(SearchResultBase):
     id: UUID4
@@ -32,6 +41,11 @@ class SearchResultInDBBase(SearchResultBase):
     updated_at: datetime
     search_text: str
     status: str = "pending"
+    @property
+    def pagination(self) -> Optional[PaginationInfo]:
+        if self.extras and "pagination" in self.extras:
+            return PaginationInfo(**self.extras["pagination"])
+        return None
 
 
     class Config:

@@ -94,14 +94,13 @@ def _build_search_query(search_term: str, exact_match: bool) -> str:
     """Build the search query string with exact match handling"""
     return f'"{search_term}"' if exact_match else search_term
 
-def _create_query_dict(index_uid: str, search_query: str, exact_match: bool) -> dict:
-    """Create a single query dictionary for Meilisearch"""
+def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip: int = 0, limit: int = 20) -> dict:
+    """Create a single query dictionary for Meilisearch with pagination"""
     return {
         'indexUid': index_uid,
-        'q': search_query,
-        'limit': 50,
-        'matchingStrategy': 'all' if exact_match else 'last',
-        'attributesToSearchOn': ['*']
+        'q': f'"{search_query}"' if exact_match else search_query,
+        'limit': limit,
+        'offset': skip,
     }
 
 def _get_meilisearch_headers() -> dict:
@@ -126,10 +125,20 @@ def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dic
         meiliresults.append({
             "table_name": result.get("indexUid"),
             "result_data": result.get("hits"),
+            "total_hits": result.get("estimatedTotalHits", 0)  # Add total hits count
         })
     return meiliresults
 
-def _update_search_result(db, search_result, meiliresults: List[dict], search_term: str, exact_match: bool,table_ids: List[str] = None,error: str = None):
+def _update_search_result(
+    db, 
+    search_result, 
+    meiliresults: List[dict], 
+    search_term: str, 
+    exact_match: bool,
+    table_ids: List[str] = None,
+    error: str = None,
+    extras: dict = None
+):
     """Update the search result in the database"""
     if not search_result:
         return
@@ -144,7 +153,10 @@ def _update_search_result(db, search_result, meiliresults: List[dict], search_te
             result=meiliresults,
             status="success",
             search_text=search_term,
-            extras={**(search_result.extras or {}), "exact_match": exact_match, "table_ids": table_ids}
+            extras=extras or {
+                "exact_match": exact_match,
+                "table_ids": table_ids
+            }
         )
     
     crud.search_result.update(
@@ -154,8 +166,15 @@ def _update_search_result(db, search_result, meiliresults: List[dict], search_te
     )
 
 @app.task
-def process_term_search(search_id: str, search_term: str, table_ids: List[str] = None, exact_match: bool = False):
-    """Process a term search asynchronously"""
+def process_term_search(
+    search_id: str, 
+    search_term: str, 
+    table_ids: List[str] = None, 
+    exact_match: bool = False,
+    skip: int = 0,
+    limit: int = 20
+):
+    """Process a term search asynchronously with pagination"""
     search_result = None
     db = next(deps.get_db())
     
@@ -168,25 +187,90 @@ def process_term_search(search_id: str, search_term: str, table_ids: List[str] =
             # Search specific tables
             tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
             for table in tables:
-                search_queries.append(_create_query_dict(table.name, search_query, exact_match))
+                search_queries.append(_create_query_dict(
+                    table.name, 
+                    search_query, 
+                    exact_match,
+                    skip,
+                    limit
+                ))
         else:
             # Search all indexes
             indexes = crud.meilisearch.get_all_indexes()
             for index in indexes.get("results", []):
-                search_queries.append(_create_query_dict(index.uid, search_query, exact_match))
+                search_queries.append(_create_query_dict(
+                    index.uid, 
+                    search_query, 
+                    exact_match,
+                    skip,
+                    limit
+                ))
 
         meiliresults = _execute_multi_search(search_queries, headers)
+
+        print("meiliresults are here", meiliresults)
         
-        # Get and update search result
+        # Get existing search result
         search_result = crud.search_result.get_by_column_first(
             db=db,
             filter_column="search_id",
             filter_value=search_id
         )
-        _update_search_result(db, search_result, meiliresults, search_term,exact_match,table_ids)
+
+        # If this is not the first page, merge with existing results
+        if skip > 0 and search_result.result:
+            current_results = search_result.result
+            existing_results_map = {r["table_name"]: r for r in current_results}
+            
+            for new_result in meiliresults:
+                table_name = new_result["table_name"]
+                if table_name in existing_results_map:
+                    existing_result = existing_results_map[table_name]
+                    # Ensure the result_data list is long enough
+                    while len(existing_result["result_data"]) < skip + limit:
+                        existing_result["result_data"].extend([])
+                    # Update the slice with new data
+                    existing_result["result_data"][skip:skip + limit] = new_result["result_data"]
+                    # Update total hits
+                    existing_result["total_hits"] = new_result["total_hits"]
+                else:
+                    # Add new table results
+                    current_results.append(new_result)
+            
+            meiliresults = current_results
+
+        # Update pagination info in extras
+        extras = {
+            **(search_result.extras or {}),
+            "exact_match": exact_match,
+            "table_ids": table_ids,
+            "pagination": {
+                "skip": skip,
+                "limit": limit,
+                "total_hits": sum(result.get("total_hits", 0) for result in meiliresults)
+            }
+        }
+
+        _update_search_result(
+            db, 
+            search_result, 
+            meiliresults, 
+            search_term,
+            exact_match,
+            table_ids,
+            extras=extras
+        )
             
     except Exception as e:
-        _update_search_result(db, search_result, [], search_term, str(e))
+        _update_search_result(
+            db, 
+            search_result, 
+            [], 
+            search_term, 
+            exact_match,
+            table_ids,
+            error=str(e)
+        )
         raise
     
     finally:

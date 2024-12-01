@@ -22,6 +22,8 @@ router = APIRouter()
 def create_search_term(
     search_in: schemas.SearchCreate,
     db: Session = Depends(deps.get_db),
+    skip:int = 0,
+    limit:int = 20,
     current_user: models.AppUser = Depends(deps.get_current_active_user),
 ) -> Any:
     """
@@ -42,12 +44,14 @@ def create_search_term(
     )
     search_result = crud.search_result.create(db=db, obj_in=search_result_in)
     
-    # Queue the search task with exact_match parameter
+    # Queue the search task with exact_match parameter and initial pagination
     task = process_term_search.apply_async(args=[
         str(search.id),
         search_in.input_search.search_text,
         search_in.input_search.table_ids if search_in.input_search.table_ids else None,
-        exact_match
+        exact_match,
+        skip,
+        limit
     ])
     
     # Update search result with task ID
@@ -55,7 +59,13 @@ def create_search_term(
         db=db,
         db_obj=search_result,
         obj_in=schemas.SearchResultUpdate(
-            extras={"task_id": task.id}
+            extras={
+                "task_id": task.id,
+                "pagination": {
+                    "skip": skip,
+                    "limit": limit
+                }
+            }
         )
     )
     
@@ -181,6 +191,8 @@ def download_result(
 @router.get("/result/{search_id}", response_model=schemas.SearchResult)
 def get_search_result(
     search_id: uuid.UUID,
+    skip:int = 0,
+    limit:int = 20,
     db: Session = Depends(deps.get_db),
     current_user: models.AppUser = Depends(deps.get_current_active_user),
 ):
@@ -201,10 +213,93 @@ def get_search_result(
     
     search_result.search_text = search.input_search["search_text"]
 
-    # Return immediately for term searches
     if search.search_type == constants.SearchType.TERM:
-        search_result.status = "success"
-        return search_result
+        extras = search_result.extras or {}
+        current_pagination = extras.get("pagination", {})
+        
+        print(f"Current search result: {search_result.result}")
+        print(f"Current pagination: {current_pagination}")
+        
+        # If we have results, check if we need to fetch more data
+        needs_new_search = True
+        if search_result.result and len(search_result.result) > 0:
+            current_max_offset = current_pagination.get("skip", 0) + current_pagination.get("limit", 0)
+            print(f"Current max offset: {current_max_offset}, Requested: skip={skip}, limit={limit}")
+            
+            # If requesting data within our current range
+            if skip + limit <= current_max_offset:
+                needs_new_search = False
+                print("Using cached data")
+                
+                # Create a deep copy of the results to avoid modifying the original
+                paginated_results = []
+                for result in search_result.result:
+                    print(result,"this is the result single")
+                    paginated_result = result.copy()
+                    if "result_data" in result and result["result_data"]:
+                        print(result["result_data"][skip:skip + limit],"this is the paginated result")
+                        paginated_result["result_data"] = result["result_data"][skip:skip + limit]
+                    else:
+                        paginated_result["result_data"] = []
+                    paginated_results.append(paginated_result)
+
+                print(paginated_results,"this is the paginated results")
+
+                # Update pagination info in database
+                crud.search_result.update(
+                    db=db,
+                    db_obj=search_result,
+                    obj_in=schemas.SearchResultUpdate(
+                        extras={
+                            **extras,
+                            "pagination": {
+                                "skip": skip,
+                                "limit": limit,
+                                "total_hits": current_pagination.get("total_hits", 0)
+                            }
+                        }
+                    )
+                )
+                
+                search_result.result = paginated_results
+                search_result.status = "success"
+                
+                
+
+        if needs_new_search:
+            print("Triggering new search")
+            # Need to fetch new data
+            task = process_term_search.apply_async(args=[
+                str(search.id),
+                search.input_search["search_text"],
+                search.input_search.get("table_ids"),
+                search.input_search.get("exact_match", False),
+                skip,
+                limit
+            ])
+            
+            # Update search result with new task ID
+            crud.search_result.update(
+                db=db,
+                db_obj=search_result,
+                obj_in=schemas.SearchResultUpdate(
+                    status="pending",
+                    extras={
+                        **extras,
+                        "task_id": task.id,
+                        "pagination": {
+                            "skip": skip,
+                            "limit": limit
+                        }
+                    }
+                )
+            )
+            search_result.status = "pending"
+            
+        print(f"Final search result status: {search_result.status}")
+        print(f"Final search result data: {search_result.result}")
+        
+    return search_result
 
     # Handle query searches
     extras = search_result.extras or {}
@@ -330,3 +425,16 @@ def get_autocomplete(
         return []  # Raise exception
 
 
+# Add a new endpoint to check task status
+@router.get("/task/{task_id}")
+def get_task_status(
+    task_id: str,
+    db: Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user),
+):
+    """Check the status of a search task"""
+    result = AsyncResult(task_id, app=app)
+    return {
+        "status": result.state.lower(),
+        "ready": result.ready()
+    }
