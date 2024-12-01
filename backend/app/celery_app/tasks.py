@@ -98,7 +98,7 @@ def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, ski
     """Create a single query dictionary for Meilisearch with pagination"""
     return {
         'indexUid': index_uid,
-        'q': f'"{search_query}"' if exact_match else search_query,
+        'q': search_query,
         'limit': limit,
         'offset': skip,
     }
