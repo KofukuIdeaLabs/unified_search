@@ -6,5 +6,5 @@ from .search_result import SearchResultCreate, SearchResultUpdate, SearchResult
 from .search import SearchCreate, SearchUpdate, Search,SearchId,RecentSearch,SearchAutocomplete,GenerateUserQueryInput,GenerateUserQueryOutput
 from .indexed_db import IndexedDBCreate, IndexedDBUpdate, IndexedDB
 from .indexed_table import IndexedTableCreate, IndexedTableUpdate, IndexedTable
-from .index_data import IndexDataCreate, IndexDataUpdate, IndexData, TableSynonyms, ColumnSynonyms, TableDescription, ColumnDescription
+from .index_data import IndexDataCreate, IndexDataUpdate, IndexData, TableSynonyms, ColumnSynonyms, TableDescription, ColumnDescription,IndexDataLocal
 from .indexed_table_column import IndexedTableColumnCreate, IndexedTableColumnUpdate, IndexedTableColumn

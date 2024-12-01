@@ -51,3 +51,7 @@ class TableDescription(BaseModel):
 class ColumnDescription(BaseModel):
     column_description: str
 
+
+class IndexDataLocal(BaseModel):
+    folder_path: str
+    db_name: str

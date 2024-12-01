@@ -21,7 +21,7 @@ class GenerateUserQueryOutput(BaseModel):
 class SearchInput(BaseModel):
     search_text: str    
     db_id: UUID4
-    table_ids: Optional[List[UUID4]] = None
+    table_ids: Optional[List[UUID4]] = []
     row_limit: Optional[int] = 50
     exact_match: Optional[bool] = False
     optimize_search: Optional[bool] = False

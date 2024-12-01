@@ -238,6 +238,121 @@ class DataFrameProcessor:
             for column in df.columns
         }
 
+def _process_dataframe(db, db_id: str, table_name: str, df: pd.DataFrame, df_processor: DataFrameProcessor):
+    """Process a single dataframe and create/update table and column records"""
+    # Generate sample data and column metadata
+    sample_data = df_processor.get_sample_data(df)
+    columns_data = df_processor.get_columns_data(df)
+
+    # Create or update table
+    table_result = crud.indexed_table.get_table_by_name_and_db_id(
+        db=db, name=table_name, db_id=db_id
+    )
+    
+    table_result = (
+        crud.indexed_table.create(
+            db=db,
+            obj_in=schemas.IndexedTableCreate(
+                name=table_name,
+                db_id=db_id,
+                sample_data=sample_data
+            )
+        ) if not table_result else
+        crud.indexed_table.update(
+            db=db,
+            db_obj=table_result,
+            obj_in=schemas.IndexedTableUpdate(
+                sample_data=sample_data
+            )
+        )
+    )
+
+    if not table_result:
+        raise ValueError(f"Table {table_name} could not be indexed")
+    
+    return table_result, columns_data
+
+def _process_columns(db, table_result, columns_data: dict):
+    """Process columns for a table"""
+    for column_name, unique_vals in columns_data.items():
+        # Truncate long string values
+        unique_vals = [
+            str(val)[:100] + '...' if isinstance(val, str) and len(str(val)) > 100 
+            else val 
+            for val in unique_vals
+        ]
+        
+        column_obj = crud.indexed_table_column.get_column_by_name_and_table_id(
+            db=db, 
+            name=column_name, 
+            table_id=table_result.id
+        )
+        
+        if not column_obj:
+            crud.indexed_table_column.create(
+                db=db,
+                obj_in=schemas.IndexedTableColumnCreate(
+                    name=column_name,
+                    table_id=table_result.id,
+                    unique_values=unique_vals
+                )
+            )
+        else:
+            crud.indexed_table_column.update(
+                db=db,
+                db_obj=column_obj,
+                obj_in=schemas.IndexedTableColumnUpdate(
+                    unique_values=unique_vals
+                )
+            )
+
+def _index_in_meilisearch(df: pd.DataFrame, table_name: str):
+    """Index dataframe in Meilisearch"""
+    data = df.to_dict('records')
+    unique_ids = [str(uuid.uuid4()) for _ in range(len(data))]
+    
+    for i, record in enumerate(data):
+        record["id"] = unique_ids[i]
+    
+    crud.meilisearch.add_rows_to_index(
+        index_name=table_name,
+        rows=data,
+        primary_key="id"
+    )
+
+def _process_single_file(db, db_id: str, file_info: dict, processors: dict, df_processor: DataFrameProcessor):
+    """Process a single file"""
+    file_path = Path(file_info["path"])
+    content_type = file_info["content_type"]
+    filename = file_info["filename"]
+    
+    processor = processors.get(content_type)
+    if not processor:
+        raise ValueError(f"File type {content_type} is not supported")
+    
+    try:
+        # Process the file and get all dataframes
+        table_dfs = processor.process(file_path, filename)
+        
+        # Process each resulting dataframe
+        for table_name, df in table_dfs:
+            # Process dataframe and get table result
+            table_result, columns_data = _process_dataframe(db, db_id, table_name, df, df_processor)
+            
+            # Process columns
+            _process_columns(db, table_result, columns_data)
+            
+            # Index in Meilisearch
+            _index_in_meilisearch(df, table_name)
+            
+            # Generate metadata asynchronously
+            # generate_metadata.apply_async(args=[db_id, table_result.id])
+        
+        return True
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
 @app.task(bind=True, max_retries=3)
 def index_data_file(self, db_id: str, saved_files: List[dict]):
     """Index data files"""
@@ -251,88 +366,42 @@ def index_data_file(self, db_id: str, saved_files: List[dict]):
     
     try:
         for file_info in saved_files:
-            file_path = Path(file_info["path"])
-            content_type = file_info["content_type"]
-            filename = file_info["filename"]
-            
             try:
-                processor = processors.get(content_type)
-                if not processor:
-                    raise ValueError(f"File type {content_type} is not supported")
-                
-                # Process the file and get all dataframes
-                table_dfs = processor.process(file_path, filename)
-                
-                # Process each resulting dataframe
-                for table_name, df in table_dfs:
-                    # Generate sample data and column metadata
-                    sample_data = df_processor.get_sample_data(df)
-                    columns_data = df_processor.get_columns_data(df)
-                    
-                    # Generate metadata asynchronously
-                    generate_metadata.apply_async(
-                        args=[
-                            db_id,
-                            table_name,
-                            sample_data,
-                            columns_data
-                        ]
-                    )
-                
+                _process_single_file(db, db_id, file_info, processors, df_processor)
             except Exception as e:
-                print(f"Error processing file {filename}: {str(e)}")
+                print(f"Error processing file {file_info['filename']}: {str(e)}")
                 if self.request.retries >= self.max_retries - 1:
+                    file_path = Path(file_info["path"])
                     if file_path.exists():
                         file_path.unlink()
                 raise
-            else:
-                if file_path.exists():
-                    file_path.unlink()
         
         return {"status": "success"}
     
     except Exception as e:
         print(f"Error processing files: {str(e)}")
         raise self.retry(exc=e)
+    finally:
+        db.close()
 
 
 
 
 
 @app.task(bind=True, max_retries=3)
-def generate_metadata(self, db_id: str, table_name: str, sample_data: list, columns_data: dict):
+def generate_metadata(self, db_id: str, table_id: str):
     """Coordinator task that triggers table and column metadata generation"""
     try:
-        db = next(deps.get_db())
         
-        # First index/update the table in DB and get the table object
-        table_result = index_table_in_db.delay(
-            db_id=db_id,
-            table_name=table_name,
-            sample_data=sample_data
-        ).get()
-        
-        if not table_result:
-            raise ValueError(f"Table {table_name} could not be indexed")
-            
-        # Index columns with unique values
-        index_table_columns_in_db.delay(
-            table_id=table_result["table_id"],
-            columns_data=columns_data
-        ).get()
-
-        # Trigger table metadata generation
-        generate_table_metadata.apply_async(args=[table_result["table_id"]])
-        
-        # Trigger column metadata generation
-        generate_column_metadata.apply_async(args=[table_result["table_id"]])
+        # Trigger table and column metadata generation tasks
+        generate_table_metadata.apply_async(args=[str(table_id)])
+        generate_column_metadata.apply_async(args=[str(table_id)])
         
         return {"status": "success", "message": "Metadata generation tasks initiated"}
+        
     except Exception as e:
         print(f"Error in generate_metadata coordinator: {str(e)}")
         raise
-    finally:
-        db.close()
 
 @app.task(bind=True, max_retries=3)
 def generate_table_metadata(self, table_id: str):
@@ -430,83 +499,8 @@ def generate_column_metadata(self, table_id: str):
     finally:
         db.close()
 
-@app.task
-def index_table_in_db(db_id: str,table_name: str,sample_data: list):
-    """Index main table data to DB"""
-    try:
-        db = next(deps.get_db())
-        table = crud.indexed_table.get_table_by_name_and_db_id(db=db,name=table_name,db_id=db_id)
-        if not table:
-            table = crud.indexed_table.create(
-                db=db,
-                obj_in=schemas.IndexedTableCreate(
-                    name=table_name,
-                    db_id=db_id,
-                    sample_data=sample_data
-                )
-            )
-        else:
-            table = crud.indexed_table.update(
-                db=db,
-                db_obj=table,
-                obj_in=schemas.IndexedTableUpdate(
-                    sample_data=sample_data
-                )
-            )
-        return {"status": "success", "table_name": table_name}
-    except Exception as e:
-        print(f"Error indexing table data: {str(e)}")
-        raise
 
-@app.task
-def index_table_columns_in_db(table_id: str, columns_data: dict):
-    """Index table columns in DB"""
-    try:    
-        db = next(deps.get_db())
-        
-        # store the columns in the database
-        for column_name, unique_vals in columns_data.items():
-            try:
-                # Truncate long string values
-                unique_vals = [
-                    str(val)[:100] + '...' if isinstance(val, str) and len(str(val)) > 100 
-                    else val 
-                    for val in unique_vals
-                ]
-                
-                column_obj = crud.indexed_table_column.get_column_by_name_and_table_id(
-                    db=db, 
-                    name=column_name, 
-                    table_id=table_id
-                )
-                
-                if not column_obj:
-                    column_obj = crud.indexed_table_column.create(
-                        db=db,
-                        obj_in=schemas.IndexedTableColumnCreate(
-                            name=column_name,
-                            table_id=table_id,
-                            unique_values=unique_vals
-                        )
-                    )
-                else:
-                    column_obj = crud.indexed_table_column.update(
-                        db=db,
-                        db_obj=column_obj,
-                        obj_in=schemas.IndexedTableColumnUpdate(
-                            unique_values=unique_vals
-                        )
-                    )
-            except Exception as e:
-                print(f"Error indexing column {column_name}: {str(e)}")
-                raise
-        
-        return {"status": "success", "table_id": table_id}
-    except Exception as e:
-        print(f"Error indexing table columns: {str(e)}")
-        raise
-    finally:
-        db.close()
+
 
 @app.task
 def index_table_in_meilisearch(table_id: str,table_name: str):

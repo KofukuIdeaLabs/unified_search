@@ -96,6 +96,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - shared-storage:/storage
+      - ./data_to_index:/app/data_to_index:rw
   celery_worker:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
@@ -115,6 +116,7 @@ services:
       - ./backend/app:/app/app
       - ./logs:/app/logs
       - shared-storage:/storage
+      - ./data_to_index:/app/data_to_index:rw
     links:
       - unified_search_rabbitmq
 
