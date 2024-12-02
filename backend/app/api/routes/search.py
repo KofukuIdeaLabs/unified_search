@@ -68,66 +68,7 @@ def create_search_term(
     return {"id": search.id}
 
 
-@router.post("/query", response_model=schemas.SearchId
-             )
-def create_search_query(
-    search_in:schemas.SearchCreate,
-    db: Session = Depends(deps.get_db),
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
-) -> Any:
-    """
-    Create a search.
-    """
 
-    search = crud.search.create(db, obj_in=search_in)
-
-    url = "{0}/api/v1/db_scaled/generate_query".format(settings.BACKEND_BASE_URL)
-
-    print(url,"this is the url")
-
-
-    try:
-
-        data = search_in.model_dump()
-        data.pop('search_type', None)
-        data["input_search"]["db_id"] = str(search_in.input_search.db_id)
-        data["input_search"]["table_ids"] = [str(table_id) for table_id in search_in.input_search.table_ids]
-        print(data,"this is the data")
-        response = requests.post(url, json=data)
-        response.raise_for_status()  # Raises an HTTPError for bad status codes
-        print(response.json(),"this is the response")
-        search_result_in = schemas.SearchResultCreate(search_id=search.id,extras={"external_search_id":response.json()})
-        search_result = crud.search_result.create(db=db,obj_in=search_result_in)
-        print(search_result.id,"this is the search result")
-    except requests.exceptions.RequestException as e:
-        print(f'An error occurred: {e}')
-
-    return {"id":search.id}
-
-
-@router.post("/generate/user_query",response_model=schemas.GenerateUserQueryOutput)
-def query_on_data(
-    query_on_data_in: schemas.GenerateUserQueryInput,
-    db: Session = Depends(deps.get_db),
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
-):
-    try:
-        data = query_on_data_in.model_dump()
-        print(data,"this is the data")
-        url = "{0}/api/v1/db_scaled/generate/user_query".format(settings.BACKEND_BASE_URL)
-        headers = {
-            "accept": "application/json",
-            "Content-Type": "application/json"
-        }
-
-        response = requests.post(url, headers=headers, json=data)
-
-        print(response.json(),"this is the response")
-        result = response.json()
-        return {"query":result.get("content")}
-    except requests.exceptions.RequestException as e:
-        print(f'An error occurred: {e}')
-        raise HTTPException(status_code=400, detail=f"Failed to generate SQL queries: {str(e)}")
 @router.get("/download/result/{search_id}")
 def download_result(
     search_id: uuid.UUID,
@@ -207,51 +148,7 @@ def _handle_term_search(search_result):
     search_result.status = _check_task_status([task_id])
     return search_result
 
-def _process_sql_queries(db: Session, search_result, external_search_id):
-    """Process SQL queries and create tasks"""
-    url = f"{settings.BACKEND_BASE_URL}/api/v1/db_scaled/search/{external_search_id}"
-    
-    try:
-        response = requests.get(url, headers={'accept': 'application/json'})
-        response.raise_for_status()
-        sql_queries = response.json()
 
-        if sql_queries:
-            # Start async tasks
-            test_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
-            test_queries = test_queries[0]["sql_query"]
-            
-            try:
-                sql_queries = sql_queries.get("sql_query")
-            except:
-                sql_queries = None
-
-            # Create tasks for each query
-            task_ids = [
-                run_sql_query.apply_async(args=[search_result.id, [query]]).id 
-                for query in test_queries
-            ]
-            
-            # Update search result
-            updated_extras = {
-                "sql_queries": sql_queries,
-                "external_search_id": external_search_id,
-                "task_ids": task_ids
-            }
-            search_result = crud.search_result.update(
-                db=db,
-                db_obj=search_result,
-                obj_in=schemas.SearchResultUpdate(extras=updated_extras)
-            )
-            search_result.status = "pending"
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to generate SQL queries: {str(e)}"
-        )
-    
-    return search_result
 
 def _check_task_status(task_ids):
     """Check status of all tasks and determine overall status"""
@@ -289,27 +186,11 @@ def get_search_result(
     if search.search_type == constants.SearchType.TERM:
         return _handle_term_search(search_result)
 
-    # Handle query searches
-    extras = search_result.extras or {}
-    external_search_id = extras.get("external_search_id")
-    if not external_search_id:
-        raise HTTPException(status_code=400, detail="External search ID not found")
 
-    sql_queries = extras.get("sql_queries")
-    task_ids = extras.get("task_ids", [])
-
-    # Process queries if needed
-    if not sql_queries or not task_ids:
-        search_result = _process_sql_queries(db, search_result, external_search_id)
-    # Check task status if tasks exist
-    elif task_ids:
-        search_result.status = _check_task_status(task_ids)
-
-    return search_result
 
 
 @router.get("/result/{search_id}/{table_id}", response_model=schemas.SearchResult)
-def get_search_result(
+def get_search_result_by_table(
     search_id: uuid.UUID,
     table_id: str,
     skip: int = 0,

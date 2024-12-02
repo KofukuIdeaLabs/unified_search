@@ -82,12 +82,13 @@ def update_user_me(
 #     return Message(message="Password updated successfully")
 
 
-# @router.get("/me", response_model=UserPublic)
-# def read_user_me(current_user: CurrentUser) -> Any:
-#     """
-#     Get current user.
-#     """
-#     return current_user
+@router.get("/me", response_model=schemas.AppUserPublic)
+def read_user_me(current_user: models.AppUser = Depends(deps.get_current_active_user)) -> Any:
+    """
+    Get current user.
+    """
+    print(current_user,"this is current user") 
+    return current_user
 
 
 # @router.delete("/me", response_model=Message)
