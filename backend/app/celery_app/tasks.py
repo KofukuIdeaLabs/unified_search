@@ -117,6 +117,7 @@ def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dic
     
     response = requests.request("POST", url, headers=headers, data=payload)
     results = response.json()
+    print(results,"these are results")
     
     meiliresults = []
     for result in results.get("results", []):
@@ -174,7 +175,7 @@ def process_term_search(
     skip: int = 0,
     limit: int = 20
 ):
-    """Process a term search asynchronously with pagination"""
+    """Process a term search asynchronously with pagination for specific table"""
     search_result = None
     db = next(deps.get_db())
     
@@ -183,72 +184,110 @@ def process_term_search(
         headers = _get_meilisearch_headers()
         search_queries = []
 
-        if table_ids:
-            # Search specific tables
-            tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
-            for table in tables:
-                search_queries.append(_create_query_dict(
-                    table.name, 
-                    search_query, 
-                    exact_match,
-                    skip,
-                    limit
-                ))
-        else:
-            # Search all indexes
-            indexes = crud.meilisearch.get_all_indexes()
-            for index in indexes.get("results", []):
-                search_queries.append(_create_query_dict(
-                    index.uid, 
-                    search_query, 
-                    exact_match,
-                    skip,
-                    limit
-                ))
-
-        meiliresults = _execute_multi_search(search_queries, headers)
-
-        print("meiliresults are here", meiliresults)
-        
-        # Get existing search result
+        # Get existing search result first
         search_result = crud.search_result.get_by_column_first(
             db=db,
             filter_column="search_id",
             filter_value=search_id
         )
 
-        # If this is not the first page, merge with existing results
-        if skip > 0 and search_result.result:
-            current_results = search_result.result
-            existing_results_map = {r["table_name"]: r for r in current_results}
+        # If table_ids contains exactly one table, we're doing single table pagination
+        if table_ids and len(table_ids) == 1:
+            tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
+            table_name = tables[0].name
+            search_queries.append(_create_query_dict(
+                table_name, 
+                search_query, 
+                exact_match,
+                skip,
+                limit
+            ))
             
-            for new_result in meiliresults:
-                table_name = new_result["table_name"]
-                if table_name in existing_results_map:
-                    existing_result = existing_results_map[table_name]
-                    # Ensure the result_data list is long enough
-                    while len(existing_result["result_data"]) < skip + limit:
-                        existing_result["result_data"].extend([])
-                    # Update the slice with new data
-                    existing_result["result_data"][skip:skip + limit] = new_result["result_data"]
-                    # Update total hits
-                    existing_result["total_hits"] = new_result["total_hits"]
-                else:
-                    # Add new table results
-                    current_results.append(new_result)
+            # Execute search for single table
+            meiliresults = _execute_multi_search(search_queries, headers)
             
-            meiliresults = current_results
+            if search_result and search_result.result:
+                existing_results = search_result.result
+                existing_table = next(
+                    (result for result in existing_results if result.get("table_name") == table_name),
+                    None
+                )
+                
+                if meiliresults:
+                    new_table_data = meiliresults[0]
+                    
+                    if existing_table:
+                        # Append new data to existing table
+                        existing_table["result_data"].extend(new_table_data["result_data"])
+                        existing_table["total_hits"] = new_table_data["total_hits"]
+                        existing_table["pagination"] = {
+                            "skip": skip,
+                            "limit": limit,
+                        }
+                        existing_table["table_id"] = table_ids[0]
+                    else:
+                        # Add pagination info to new table data
+                        new_table_data["pagination"] = {
+                            "skip": skip,
+                            "limit": limit,
+                        }
+                        new_table_data["table_id"] = table_ids[0]
+                        # Add the new table data to existing results
+                        existing_results.append(new_table_data)
+                    
+                    meiliresults = existing_results
+        else:
+            # Original multi-table search logic
+            if table_ids:
+                tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
+                for table in tables:
+                    #TODO: remove these conditionals
+                    if table.name in ["kp_employee", "name_age_rank"]:
+                        search_queries.append(_create_query_dict(
+                            table.name, 
+                            search_query, 
+                            exact_match,
+                            skip,
+                            limit
+                        ))
+            else:
+                tables = crud.indexed_table.get_all_tables(db=db)
+                for table in tables:
+                    #TODO: remove these conditionals
+                    if table.name in ["kp_employee", "name_age_rank"]:
+                        search_queries.append(_create_query_dict(
+                            table.name, 
+                            search_query, 
+                            exact_match,
+                            skip,
+                            limit
+                        ))
 
-        # Update pagination info in extras
+            # Create a mapping of table names to their IDs
+            table_name_to_id = {table.name: str(table.id) for table in tables}
+
+            print(search_queries,"these are search queries")
+            print(table_name_to_id,"these are table name to id")
+            
+            meiliresults = _execute_multi_search(search_queries, headers)
+
+            print(meiliresults,"these are meiliresults")
+            
+            # Add pagination info and table_id to each table's results
+            for result in meiliresults:
+                result["pagination"] = {
+                    "skip": skip,
+                    "limit": limit,
+                }
+                result["table_id"] = table_name_to_id.get(result["table_name"])
+                print(result, "this is the result new")
+
+
+        # Update extras
         extras = {
             **(search_result.extras or {}),
             "exact_match": exact_match,
             "table_ids": table_ids,
-            "pagination": {
-                "skip": skip,
-                "limit": limit,
-                "total_hits": sum(result.get("total_hits", 0) for result in meiliresults)
-            }
         }
 
         _update_search_result(

@@ -61,10 +61,6 @@ def create_search_term(
         obj_in=schemas.SearchResultUpdate(
             extras={
                 "task_id": task.id,
-                "pagination": {
-                    "skip": skip,
-                    "limit": limit
-                }
             }
         )
     )
@@ -186,17 +182,142 @@ def download_result(
     )
 
 
+def _get_and_validate_search(db: Session, search_id: uuid.UUID):
+    """Get and validate search exists"""
+    search = crud.search.get(db=db, id=search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Search not found")
+    return search
 
+def _get_and_validate_search_result(db: Session, search_id: uuid.UUID):
+    """Get and validate search result exists"""
+    search_result = crud.search_result.get_by_column_first(
+        db=db,
+        filter_column="search_id", 
+        filter_value=search_id
+    )
+    if not search_result:
+        raise HTTPException(status_code=404, detail="Search result not found")
+    return search_result
+
+def _handle_term_search(search_result):
+    """Handle term-based search results"""
+    task_id = search_result.extras.get("task_id", [])
+
+    search_result.status = _check_task_status([task_id])
+    return search_result
+
+def _process_sql_queries(db: Session, search_result, external_search_id):
+    """Process SQL queries and create tasks"""
+    url = f"{settings.BACKEND_BASE_URL}/api/v1/db_scaled/search/{external_search_id}"
+    
+    try:
+        response = requests.get(url, headers={'accept': 'application/json'})
+        response.raise_for_status()
+        sql_queries = response.json()
+
+        if sql_queries:
+            # Start async tasks
+            test_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
+            test_queries = test_queries[0]["sql_query"]
+            
+            try:
+                sql_queries = sql_queries.get("sql_query")
+            except:
+                sql_queries = None
+
+            # Create tasks for each query
+            task_ids = [
+                run_sql_query.apply_async(args=[search_result.id, [query]]).id 
+                for query in test_queries
+            ]
+            
+            # Update search result
+            updated_extras = {
+                "sql_queries": sql_queries,
+                "external_search_id": external_search_id,
+                "task_ids": task_ids
+            }
+            search_result = crud.search_result.update(
+                db=db,
+                db_obj=search_result,
+                obj_in=schemas.SearchResultUpdate(extras=updated_extras)
+            )
+            search_result.status = "pending"
+
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to generate SQL queries: {str(e)}"
+        )
+    
+    return search_result
+
+def _check_task_status(task_ids):
+    """Check status of all tasks and determine overall status"""
+    all_completed = True
+    any_failed = False
+    
+    for task_id in task_ids:
+        result = AsyncResult(task_id, app=app)
+        if result.state.lower() not in ["success", "failed"]:
+            all_completed = False
+        if result.state.lower() == "failed":
+            any_failed = True
+    
+    if any_failed:
+        return "failed"
+    elif all_completed:
+        return "success"
+    return "pending"
 
 @router.get("/result/{search_id}", response_model=schemas.SearchResult)
 def get_search_result(
     search_id: uuid.UUID,
-    skip:int = 0,
-    limit:int = 20,
     db: Session = Depends(deps.get_db),
     current_user: models.AppUser = Depends(deps.get_current_active_user),
 ):
     """Get search results for a given search ID"""
+    # Get and validate search and search result
+    search = _get_and_validate_search(db, search_id)
+    search_result = _get_and_validate_search_result(db, search_id)
+    
+    # Add search text to result
+    search_result.search_text = search.input_search["search_text"]
+    
+    # Handle term-based searches
+    if search.search_type == constants.SearchType.TERM:
+        return _handle_term_search(search_result)
+
+    # Handle query searches
+    extras = search_result.extras or {}
+    external_search_id = extras.get("external_search_id")
+    if not external_search_id:
+        raise HTTPException(status_code=400, detail="External search ID not found")
+
+    sql_queries = extras.get("sql_queries")
+    task_ids = extras.get("task_ids", [])
+
+    # Process queries if needed
+    if not sql_queries or not task_ids:
+        search_result = _process_sql_queries(db, search_result, external_search_id)
+    # Check task status if tasks exist
+    elif task_ids:
+        search_result.status = _check_task_status(task_ids)
+
+    return search_result
+
+
+@router.get("/result/{search_id}/{table_id}", response_model=schemas.SearchResult)
+def get_search_result(
+    search_id: uuid.UUID,
+    table_id: str,
+    skip: int = 0,
+    limit: int = 20,
+    db: Session = Depends(deps.get_db),
+    current_user: models.AppUser = Depends(deps.get_current_active_user),
+):
+    """Get search results for a given search ID and table name"""
     # Get search and validate it exists
     search = crud.search.get(db=db, id=search_id)
     if not search:
@@ -213,167 +334,73 @@ def get_search_result(
     
     search_result.search_text = search.input_search["search_text"]
 
-    if search.search_type == constants.SearchType.TERM:
-        extras = search_result.extras or {}
-        current_pagination = extras.get("pagination", {})
+    table = crud.indexed_table.get(db=db,id=table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    table_name = table.name
+
+    print(table_name,"this is the table_name")
+
+    # Find the specific table's data
+    table_result = next(
+        (result for result in (search_result.result or []) if result.get("table_name") == table_name),
+        None
+    )
+
+    print(table_result,"this is the table result")
+    
+    needs_new_search = True
+    if table_result:
+        # Get pagination info from the table's data
+        table_pagination = table_result.get("pagination", {})
+        print(table_pagination,"this is the table pagination")
+        current_max_offset = table_pagination.get("skip", 0) + table_pagination.get("limit", 0)
+        print(current_max_offset,"this is the current max offset")
         
-        print(f"Current search result: {search_result.result}")
-        print(f"Current pagination: {current_pagination}")
-        
-        # If we have results, check if we need to fetch more data
-        needs_new_search = True
-        if search_result.result and len(search_result.result) > 0:
-            current_max_offset = current_pagination.get("skip", 0) + current_pagination.get("limit", 0)
-            print(f"Current max offset: {current_max_offset}, Requested: skip={skip}, limit={limit}")
+        # If requesting data within our current range
+        if skip + limit <= current_max_offset:
+            needs_new_search = False
+            print("Using cached data")
             
-            # If requesting data within our current range
-            if skip + limit <= current_max_offset:
-                needs_new_search = False
-                print("Using cached data")
-                
-                # Create a deep copy of the results to avoid modifying the original
-                paginated_results = []
-                for result in search_result.result:
-                    print(result,"this is the result single")
-                    paginated_result = result.copy()
-                    if "result_data" in result and result["result_data"]:
-                        print(result["result_data"][skip:skip + limit],"this is the paginated result")
-                        paginated_result["result_data"] = result["result_data"][skip:skip + limit]
-                    else:
-                        paginated_result["result_data"] = []
-                    paginated_results.append(paginated_result)
-
-                print(paginated_results,"this is the paginated results")
-
-                # Update pagination info in database
-                crud.search_result.update(
-                    db=db,
-                    db_obj=search_result,
-                    obj_in=schemas.SearchResultUpdate(
-                        extras={
-                            **extras,
-                            "pagination": {
-                                "skip": skip,
-                                "limit": limit,
-                                "total_hits": current_pagination.get("total_hits", 0)
-                            }
-                        }
-                    )
-                )
-                
-                search_result.result = paginated_results
-                search_result.status = "success"
-                
-                
-
-        if needs_new_search:
-            print("Triggering new search")
-            # Need to fetch new data
-            task = process_term_search.apply_async(args=[
-                str(search.id),
-                search.input_search["search_text"],
-                search.input_search.get("table_ids"),
-                search.input_search.get("exact_match", False),
-                skip,
-                limit
-            ])
-            
-            # Update search result with new task ID
-            crud.search_result.update(
-                db=db,
-                db_obj=search_result,
-                obj_in=schemas.SearchResultUpdate(
-                    status="pending",
-                    extras={
-                        **extras,
-                        "task_id": task.id,
-                        "pagination": {
-                            "skip": skip,
-                            "limit": limit
-                        }
-                    }
-                )
-            )
-            search_result.status = "pending"
-            
-        print(f"Final search result status: {search_result.status}")
-        print(f"Final search result data: {search_result.result}")
-        
-    return search_result
-
-    # Handle query searches
-    extras = search_result.extras or {}
-    external_search_id = extras.get("external_search_id")
-    if not external_search_id:
-        raise HTTPException(status_code=400, detail="External search ID not found")
-
-    sql_queries = extras.get("sql_queries")
-    task_ids = extras.get("task_ids", [])
-
-    # If no existing queries/tasks, fetch and start tasks
-    if not sql_queries or not task_ids:
-        url = f"{settings.BACKEND_BASE_URL}/api/v1/db_scaled/search/{external_search_id}"
-        
-        try:
-            response = requests.get(url, headers={'accept': 'application/json'})
-            response.raise_for_status()
-            sql_queries = response.json()
-
-            if sql_queries:
-                # Start async tasks
-                test_queries = [{"sql_query":["select * from indexed_db","select * from appuser"]}]
-                test_queries = test_queries[0]["sql_query"]
-                try:
-                    sql_queries = sql_queries.get("sql_query")
-                except:
-                    sql_queries = None
-
-                # Create a separate task for each query
-                task_ids = []
-                for query in test_queries:
-                    task = run_sql_query.apply_async(args=[search_result.id, [query]])
-                    task_ids.append(task.id)
-                
-                # Update search result with new data
-                updated_extras = {
-                    "sql_queries": sql_queries,
-                    "external_search_id": external_search_id,
-                    "task_ids": task_ids
-                }
-                search_result = crud.search_result.update(
-                    db=db,
-                    db_obj=search_result,
-                    obj_in=schemas.SearchResultUpdate(extras=updated_extras)
-                )
-                search_result.status = "pending"
-
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to generate SQL queries: {str(e)}"
-            )
-
-    # Check status of all tasks
-    elif task_ids:
-        all_completed = True
-        any_failed = False
-        
-        for task_id in task_ids:
-            result = AsyncResult(task_id, app=app)
-            if result.state.lower() not in ["success", "failed"]:
-                all_completed = False
-            if result.state.lower() == "failed":
-                any_failed = True
-        
-        if any_failed:
-            search_result.status = "failed"
-        elif all_completed:
+            # Update only this table's data with pagination
+            table_result["result_data"] = table_result["result_data"][skip:skip + limit]
+            table_result["pagination"] = {
+                "skip": skip,
+                "limit": limit,
+            }
+            print(table_result,"this is the table result after pagination")
             search_result.status = "success"
-        else:
-            search_result.status = "pending"
+            search_result.result = [table_result]
 
+    if needs_new_search:
+        print("Triggering new search")
+        # Need to fetch new data
+        task = process_term_search.apply_async(args=[
+            str(search.id),
+            search.input_search["search_text"],
+            [table_id],  # Only search the specific table
+            search.input_search.get("exact_match", False),
+            skip,
+            limit
+        ])
+        
+        # Update search result with new task ID
+        crud.search_result.update(
+            db=db,
+            db_obj=search_result,
+            obj_in=schemas.SearchResultUpdate(
+                status="pending",
+                extras={
+                    **search_result.extras,
+                    "task_id": task.id
+                }
+            )
+        )
+        search_result.result = []
+        search_result.status = "pending"
+    
     return search_result
-
     
 
 

@@ -11,6 +11,8 @@ class CRUDIndexedTable(CRUDBase[IndexedTable, IndexedTableCreate, IndexedTableUp
         return db.query(IndexedTable).filter(IndexedTable.name==name,IndexedTable.db_id==db_id).first()
     def get_tables_by_ids(self,db:Session,table_ids:List[str]):
         return db.query(IndexedTable).filter(IndexedTable.id.in_(table_ids)).all()
+    def get_all_tables(self,db:Session):
+        return db.query(IndexedTable).all()
 
 
 indexed_table = CRUDIndexedTable(IndexedTable)

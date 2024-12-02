@@ -10,3 +10,4 @@ meili_data/
 *.logs
 **/logs/
 data/
+data_to_index/

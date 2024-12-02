@@ -3,13 +3,23 @@ from pydantic import UUID4, BaseModel,Field
 from datetime import datetime
 
 
+
+class PaginationInfo(BaseModel):
+    skip: int
+    limit: int
+
+
 class SearchResultFormat(BaseModel):
     table_name:str
     result_data:List
+    table_id:Optional[UUID4]=None
+    pagination:Optional[PaginationInfo]=None
+    total_hits:Optional[int]=None
+
 
 # Shared properties
 class SearchResultBase(BaseModel):
-    result: Optional[List[SearchResultFormat]]=[]
+    result: Optional[List[SearchResultFormat]]=None
     rating: Optional[int]=None
     is_satisfied: Optional[bool]=None
     search_id: Optional[UUID4]=None
@@ -29,11 +39,6 @@ class SearchResultCreate(SearchResultBase):
 class SearchResultUpdate(SearchResultBase):
     pass
 
-class PaginationInfo(BaseModel):
-    offset: int
-    limit: int
-    total_hits: Optional[int] = None
-
 
 class SearchResultInDBBase(SearchResultBase):
     id: UUID4
@@ -41,12 +46,6 @@ class SearchResultInDBBase(SearchResultBase):
     updated_at: datetime
     search_text: str
     status: str = "pending"
-    @property
-    def pagination(self) -> Optional[PaginationInfo]:
-        if self.extras and "pagination" in self.extras:
-            return PaginationInfo(**self.extras["pagination"])
-        return None
-
 
     class Config:
         orm_mode = True
