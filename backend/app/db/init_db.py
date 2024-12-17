@@ -2,6 +2,8 @@ from app import crud, schemas
 from app.constants.role import Role
 from app.core.config import settings
 from sqlalchemy.orm import Session
+from app.utils import get_class_attributes
+from app.constants.form_template_element import FormTemplateElement
 import logging
 import os
 
@@ -32,6 +34,16 @@ def init_db(db: Session) -> None:
             description=Role.MEMBER["description"],
         )
         member_role = crud.role.create(db, obj_in=member_role_in)
+
+    guest_role = crud.role.get_by_name(db, name=Role.GUEST["name"])
+    print(guest_role,"this is guest role")
+    if not guest_role:
+        guest_role_in = schemas.RoleCreate(
+            name=Role.GUEST["name"],
+            description=Role.GUEST["description"],
+        )
+        print(guest_role_in,"this is guest role in")
+        guest_role = crud.role.create(db, obj_in=guest_role_in)
 
 
 
@@ -92,5 +104,30 @@ def init_db(db: Session) -> None:
             org_id=organization.id,
         )
         member_user = crud.app_user.create(db, obj_in=user_in)
+
+
+    guest_user = crud.app_user.get_by_email(db, email=settings.DEFAULT_GUEST_EMAIL)
+    if not guest_user:
+        organization = crud.organization.get_by_name(
+            db, name=settings.DEFAULT_ORGANIZATION_NAME
+        )
+
+        user_in = schemas.AppUserCreate(
+            email=settings.DEFAULT_GUEST_EMAIL,
+            password=settings.DEFAULT_GUEST_PASSWORD,
+            full_name=settings.DEFAULT_GUEST_FULL_NAME,
+            role_id=guest_role.id,
+            org_id=organization.id,
+        )
+        guest_user = crud.app_user.create(db, obj_in=user_in)
+
+    _, attribute_values = get_class_attributes(FormTemplateElement)
+    for v in attribute_values:
+        form_template_element = crud.form_template_element.get_by_column_first(db,filter_column="name", filter_value=v["name"])
+        if not form_template_element:
+            db_obj_in = schemas.FormTemplateElementCreate(
+                name=v["name"], template=v["template"]
+            )
+            crud.form_template_element.create(db, obj_in=db_obj_in)
 
   

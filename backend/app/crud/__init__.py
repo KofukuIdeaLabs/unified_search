@@ -7,3 +7,6 @@ from .crud_search_result import search_result
 from .crud_indexed_db import indexed_db
 from .crud_indexed_table import indexed_table
 from .crud_indexed_table_column import indexed_table_column
+from .crud_form_instance import form_instance
+from .crud_form_template import form_template
+from .crud_form_template_element import form_template_element

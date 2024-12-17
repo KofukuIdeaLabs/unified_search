@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     DEFAULT_SUPER_ADMIN_PASSWORD: str
     DEFAULT_SUPER_ADMIN_FULL_NAME: str
 
+    DEFAULT_GUEST_EMAIL: str = "guest@kofukuidealabs.com"
+    DEFAULT_GUEST_PASSWORD: str = "12345678"
+    DEFAULT_GUEST_FULL_NAME: str = "Guest"
+
     DEFAULT_ORGANIZATION_NAME: str
     DEFAULT_ORGANIZATION_DESCRIPTION: str
 

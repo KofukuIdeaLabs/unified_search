@@ -53,5 +53,4 @@ class ColumnDescription(BaseModel):
 
 
 class IndexDataLocal(BaseModel):
-    folder_path: str
     db_name: str

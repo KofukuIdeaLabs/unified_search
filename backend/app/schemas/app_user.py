@@ -57,3 +57,14 @@ class AppUser(AppUserInDBBase):
 class AppUserInDB(AppUserInDBBase):
     hashed_password: str
 
+class AppUserPublic(BaseModel):
+    id: UUID4
+    email: EmailStr
+    full_name: str
+    role_name: str
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool
+    role_id: UUID4
+    class Config:
+        orm_mode = True

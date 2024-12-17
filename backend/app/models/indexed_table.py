@@ -20,6 +20,7 @@ class IndexedTable(Base):
         default=uuid4,
     )
     name = Column(String, index=True)
+    display_name = Column(String)
     description = Column(String)
     synonyms = Column(ARRAY(String))
     db_id = Column(UUID(as_uuid=True), ForeignKey("indexed_db.id"))
@@ -28,4 +29,6 @@ class IndexedTable(Base):
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
     )
+    attributes_to_retrieve = Column(JSONB, default=dict)
+    access_to_roles = Column(ARRAY(UUID(as_uuid=True)), default=list)
     deleted_at = Column(DateTime)

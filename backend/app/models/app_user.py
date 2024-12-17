@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 class AppUser(Base):
-    __tablename__ = "appuser"
+    __tablename__ = "app_user"
 
 
     id = Column(

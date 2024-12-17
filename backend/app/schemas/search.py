@@ -1,17 +1,27 @@
 from typing import Optional,List
 from pydantic import UUID4, BaseModel
 from datetime import datetime
-
+from typing import Union
 
 
 
 
 class GenerateUserQueryInput(BaseModel):
-    data: dict
+    data: List[dict]
 
 
-class GenerateUserQueryOutput(BaseModel):
-    query: str
+# class GenerateUserQueryOutput(BaseModel):
+#     query: str
+
+
+class GeneratePromptOutput(BaseModel):
+    type: str
+    data: str
+
+
+class GeneratePromptOutputResponse(BaseModel):
+    result: List[GeneratePromptOutput]
+
 
 
 

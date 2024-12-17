@@ -139,17 +139,16 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         db.refresh(db_obj)
         return db_obj
 
-    def remove(self, db: Session, *, id: int) -> ModelType:
-        obj = db.query(self.model).get(id)
+    def remove(self, db: Session, *, db_obj: ModelType) -> ModelType:
         if hasattr(self.model, "deleted_at"):
-            obj.deleted_at = datetime.datetime.utcnow()
-            db.add(obj)
+            db_obj.deleted_at = datetime.datetime.utcnow()
+            db.add(db_obj)
             db.commit()
-            db.refresh(obj)
-            return obj
-        db.delete(obj)
+            db.refresh(db_obj)
+            return db_obj
+        db.delete(db_obj)
         db.commit()
-        return obj
+        return db_obj
     
     def bulk_insert(self, db: Session, data_in) -> List[ModelType]:
         db_objs = [self.model(**jsonable_encoder(obj_data)) for obj_data in data_in]

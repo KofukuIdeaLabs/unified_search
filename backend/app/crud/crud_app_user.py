@@ -7,7 +7,7 @@ from app.schemas.app_user import AppUserCreate, AppUserUpdate
 from pydantic.types import UUID4
 from sqlalchemy.orm import Session, defer
 from app.crud.crud_role import role
-
+from app.core.config import settings
 from app.constants.role import Role as ConstantsRole
 
 
@@ -17,7 +17,7 @@ class CRUDAppUser(CRUDBase[AppUser, AppUserCreate, AppUserUpdate]):
         return db.query(self.model).filter(AppUser.email == email).first()
     
     def get_with_roles(self, db: Session, *, id: UUID4) -> Optional[AppUser]:
-        return db.query(self.model.id,self.model.created_at,self.model.updated_at,self.model.email,self.model.full_name,self.model.is_active,self.model.org_id,Role.name.label("role_name")).join(Role,Role.id == self.model.role_id).filter(self.model.id == id).first()
+        return db.query(self.model.id,self.model.created_at,self.model.updated_at,self.model.email,self.model.full_name,self.model.is_active,self.model.org_id,Role.name.label("role_name"),self.model.role_id).join(Role,Role.id == self.model.role_id).filter(self.model.id == id).first()
 
     def create(self, db: Session, *, obj_in: AppUserCreate) -> AppUser:
         if not obj_in.role_id:
@@ -114,5 +114,7 @@ class CRUDAppUser(CRUDBase[AppUser, AppUserCreate, AppUserUpdate]):
     def get_org_id_from_user_id(self, db: Session, user_id: UUID4):
         return db.query(AppUser).filter(AppUser.id == user_id).one()
 
+    def get_guest_user(self, db: Session):
+        return db.query(self.model.id,self.model.created_at,self.model.updated_at,self.model.email,self.model.full_name,self.model.is_active,self.model.org_id,Role.name.label("role_name"),self.model.role_id).join(Role,Role.id == self.model.role_id).filter(self.model.email == settings.DEFAULT_GUEST_EMAIL).first()
 
 app_user = CRUDAppUser(AppUser)

@@ -7,16 +7,17 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
+from app.api.deps import CurrentActiveUserOrGuest
 
 router = APIRouter()
 
 
-@router.get("/all", response_model=List[schemas.IndexedDB])
+@router.get("/", response_model=List[schemas.IndexedDB])
 def get_indexed_dbs(
+    current_user_or_guest: CurrentActiveUserOrGuest,
     db: Session = Depends(deps.get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
 ) -> Any:
     """
     Retrieve all indexed dbs.

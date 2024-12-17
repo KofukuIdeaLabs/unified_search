@@ -6,3 +6,6 @@ from .search_result import SearchResult
 from .indexed_db import IndexedDB
 from .indexed_table import IndexedTable
 from .indexed_table_column import IndexedTableColumn
+from .form_template import FormTemplate
+from .form_instance import FormInstance
+from .form_template_element import FormTemplateElement

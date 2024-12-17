@@ -20,6 +20,8 @@ from app.utils.index_data import index_data
 from abc import ABC, abstractmethod
 from app.core.security import settings
 from typing import List
+import datetime
+from pydantic import UUID4
 
 def extract_table_names(sql_query):
     """
@@ -94,13 +96,14 @@ def _build_search_query(search_term: str, exact_match: bool) -> str:
     """Build the search query string with exact match handling"""
     return f'"{search_term}"' if exact_match else search_term
 
-def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip: int = 0, limit: int = 20) -> dict:
+def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip: int = 0, limit: int = 20,attributes_to_search_on:List[str] = ["*"]) -> dict:
     """Create a single query dictionary for Meilisearch with pagination"""
     return {
         'indexUid': index_uid,
         'q': search_query,
         'limit': limit,
         'offset': skip,
+        'attributesToSearchOn': attributes_to_search_on
     }
 
 def _get_meilisearch_headers() -> dict:
@@ -168,6 +171,7 @@ def _update_search_result(
 
 @app.task
 def process_term_search(
+    role_id: UUID4,
     search_id: str, 
     search_term: str, 
     table_ids: List[str] = None, 
@@ -176,6 +180,7 @@ def process_term_search(
     limit: int = 20
 ):
     """Process a term search asynchronously with pagination for specific table"""
+    print(role_id,"this is role id")
     search_result = None
     db = next(deps.get_db())
     
@@ -195,12 +200,20 @@ def process_term_search(
         if table_ids and len(table_ids) == 1:
             tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
             table_name = tables[0].name
+            display_name = tables[0].display_name
+            attributes_for_role = ["*"]
+            attributes_to_retrieve = tables[0].attributes_to_retrieve
+            print(attributes_to_retrieve,"these are attributes to retrieve")
+            if attributes_to_retrieve:
+                attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                print(attributes_for_role,"these are attributes for role")
             search_queries.append(_create_query_dict(
                 table_name, 
                 search_query, 
                 exact_match,
                 skip,
-                limit
+                limit,
+                attributes_for_role
             ))
             
             # Execute search for single table
@@ -225,6 +238,7 @@ def process_term_search(
                             "limit": limit,
                         }
                         existing_table["table_id"] = table_ids[0]
+                        existing_table["display_name"] = display_name
                     else:
                         # Add pagination info to new table data
                         new_table_data["pagination"] = {
@@ -232,6 +246,7 @@ def process_term_search(
                             "limit": limit,
                         }
                         new_table_data["table_id"] = table_ids[0]
+                        new_table_data["display_name"] = display_name
                         # Add the new table data to existing results
                         existing_results.append(new_table_data)
                     
@@ -243,16 +258,29 @@ def process_term_search(
                 for table in tables:
                     #TODO: remove these conditionals
                     if table.name in ["kp_employee", "name_age_rank"]:
+                        attributes_to_retrieve = table.attributes_to_retrieve
+                        print(attributes_to_retrieve,"these are attributes to retrieve")
+                        attributes_for_role = ["*"]
+                        if attributes_to_retrieve:
+                            attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                            print(attributes_for_role,"these are attributes for role")
                         search_queries.append(_create_query_dict(
                             table.name, 
                             search_query, 
                             exact_match,
                             skip,
-                            limit
+                            limit,
+                            attributes_for_role
                         ))
             else:
-                tables = crud.indexed_table.get_all_tables(db=db)
+                tables = crud.indexed_table.get_tables_by_role(db=db,role_id=role_id)
                 for table in tables:
+                    attributes_to_retrieve = table.attributes_to_retrieve
+                    print(attributes_to_retrieve,"these are attributes to retrieve")
+                    attributes_for_role = ["*"]
+                    if attributes_to_retrieve:
+                        attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                        print(attributes_for_role,"these are attributes for role")
                     #TODO: remove these conditionals
                     if table.name in ["kp_employee", "name_age_rank"]:
                         search_queries.append(_create_query_dict(
@@ -260,12 +288,14 @@ def process_term_search(
                             search_query, 
                             exact_match,
                             skip,
-                            limit
+                            limit,
+                            attributes_for_role
                         ))
 
             # Create a mapping of table names to their IDs
             table_name_to_id = {table.name: str(table.id) for table in tables}
-
+            table_id_to_display_name = {str(table.id): table.display_name for table in tables}
+            print(table_id_to_display_name,"these are table id to display name")
             print(search_queries,"these are search queries")
             print(table_name_to_id,"these are table name to id")
             
@@ -280,6 +310,7 @@ def process_term_search(
                     "limit": limit,
                 }
                 result["table_id"] = table_name_to_id.get(result["table_name"])
+                result["display_name"] = table_id_to_display_name.get(result["table_id"])
                 print(result, "this is the result new")
 
 
@@ -436,6 +467,16 @@ def _index_in_meilisearch(df: pd.DataFrame, table_name: str):
     
     for i, record in enumerate(data):
         record["id"] = unique_ids[i]
+        # Convert non-serializable objects to strings
+        for key, value in record.items():
+            if isinstance(value, (datetime.datetime, datetime.date)):
+                record[key] = value.isoformat()
+            elif isinstance(value, datetime.time):
+                record[key] = value.strftime('%H:%M:%S')  # Convert time to string
+            elif isinstance(value, bytes):
+                record[key] = value.decode('utf-8', errors='ignore')  # Convert bytes to string
+            elif not isinstance(value, (str, int, float, bool, type(None))):
+                record[key] = str(value)  # Fallback conversion to string for other types
     
     crud.meilisearch.add_rows_to_index(
         index_name=table_name,
