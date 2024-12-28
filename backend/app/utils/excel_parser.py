@@ -209,9 +209,9 @@ class ExcelFileParser:
 
         for sheet_name in sheet_names:
             if is_csv:
-                dfs, df_mds = self.parse_excel_sheet(file_path[sheet_name], sheet_name,col_threshold=2,row_threshold=2,max_empty_rows=6,max_empty_cols=5, is_csv=is_csv)
+                dfs, df_mds = self.parse_excel_sheet(file_path[sheet_name], sheet_name,col_threshold=4,row_threshold=4,max_empty_rows=6,max_empty_cols=5, is_csv=is_csv)
             else:
-                dfs, df_mds = self.parse_excel_sheet(file_path, sheet_name,col_threshold=2,row_threshold=2,max_empty_rows=6,max_empty_cols=5, is_csv=is_csv)
+                dfs, df_mds = self.parse_excel_sheet(file_path, sheet_name,col_threshold=4,row_threshold=4,max_empty_rows=6,max_empty_cols=5, is_csv=is_csv)
             df_dict = {}
 
             for i,df in enumerate(dfs):

@@ -55,8 +55,10 @@ services:
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
+    volumes:
+      - ./backend/app:/app/app
 
-  backend:
+  backend_unified_search_army_signals:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
     depends_on:
@@ -97,7 +99,7 @@ services:
       - ./backend/app:/app/app
       - shared-storage:/storage
       - ./data_to_index:/app/data_to_index:rw
-  celery_worker:
+  celery_worker_unified_search_army_signals:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
     depends_on:
@@ -118,15 +120,15 @@ services:
       - shared-storage:/storage
       - ./data_to_index:/app/data_to_index:rw
     links:
-      - unified_search_rabbitmq
+      - rabbitmq
 
   
 
   meilisearch:
-    image: getmeili/meilisearch:v1.8.1
+    image: getmeili/meilisearch
     restart: unless-stopped
     ports:
-      - 7789:7700
+      - 7788:7700
     volumes:
       # - meilisearch-data:/meili_data/data.ms
       - ./meili_data:/meili_data
@@ -140,26 +142,24 @@ services:
     #    mem_limit: 450m
     restart: unless-stopped
     ports:
-      - 6445:6333
+      - 6453:6333
     volumes:
       - qdrant-data:/qdrant/storage
 
-  unified_search_rabbitmq:
-    container_name: unified_search_rabbitmq
+  rabbitmq:
     image: rabbitmq:3.9.29-management-alpine
     env_file:
       - .env
     ports:
-      - "5673:5672"
-      - "15673:15672"
+      - "5679:5672"
+      - "15679:15672"
     volumes:
-      - rabbitmq-data1:/data
+      - rabbitmq-data:/data
 
-  
+
 volumes:
   db-data:
   qdrant-data:
-  meilisearch-data:
-  rabbitmq-data1:
+  rabbitmq-data:
   shared-storage:
 

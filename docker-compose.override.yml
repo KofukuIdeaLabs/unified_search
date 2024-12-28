@@ -3,14 +3,14 @@ services:
   db:
     restart: "no"
     ports:
-      - "5439:5432"
+      - "5447:5432"
 
   adminer:
     restart: "no"
     ports:
       - "8080:8080"
 
-  backend:
+  backend_unified_search_army_signals:
     restart: "no"
     ports:
       - "8000:8000"
@@ -23,4 +23,6 @@ services:
       - --reload
       - "app/main.py"
   
+ 
+
  
