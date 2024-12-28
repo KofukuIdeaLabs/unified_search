@@ -18,3 +18,10 @@ class Role:
         "description": "Members with low level permissions",
     }
 
+    GUEST = {
+        "name": "GUEST",
+        "description": "Members with low level permissions",
+    }
+
+
+

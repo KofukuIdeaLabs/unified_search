@@ -16,10 +16,13 @@ import re
 import json
 import requests
 import os
+import datetime
 from app.utils.index_data import index_data
 from abc import ABC, abstractmethod
 from app.core.security import settings
 from typing import List
+from pydantic import UUID4
+import copy
 
 
 
@@ -31,14 +34,17 @@ def _build_search_query(search_term: str, exact_match: bool) -> str:
     """Build the search query string with exact match handling"""
     return f'"{search_term}"' if exact_match else search_term
 
-def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip: int = 0, limit: int = 20) -> dict:
+def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip: int = 0, limit: int = 20,attributes_to_search_on:List[str] = ["*"],filters=None) -> dict:
     """Create a single query dictionary for Meilisearch with pagination"""
     return {
         'indexUid': index_uid,
         'q': search_query,
         'limit': limit,
         'offset': skip,
+        'attributesToSearchOn': attributes_to_search_on,
+        "filter": filters
     }
+
 
 def _get_meilisearch_headers() -> dict:
     """Get headers for Meilisearch API requests"""
@@ -60,8 +66,38 @@ def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dic
     for result in results.get("results", []):
         if not result.get("hits"):
             continue
+        for hit in result["hits"]:
+            hit.pop("meili_id",None)
         meiliresults.append({
             "table_name": result.get("indexUid"),
+            "result_data": result.get("hits"),
+            "total_hits": result.get("estimatedTotalHits", 0)  # Add total hits count
+        })
+    return meiliresults
+
+
+def _execute_search(index_name,search_query:dict, headers: dict) -> List[dict]:
+    """Execute multi-search request to Meilisearch"""
+    url = "http://meilisearch:7700/indexes/{0}/search".format(index_name)
+    print(url,"this is the url")
+    print(index_name,search_query,"this is the search query")
+    payload = json.dumps(search_query)
+
+    print(payload,"This the payload")
+    
+    response = requests.request("POST", url, headers=headers, data=payload)
+
+    print(response,"this is the response")
+    result = response.json()
+    print(result,"these are results")
+    
+    meiliresults = []
+    for hit in result["hits"]:
+        print(hit,"this is the hit")
+        hit.pop("meili_id",None)
+    if result["hits"]:
+        meiliresults.append({
+            "table_name": index_name,
             "result_data": result.get("hits"),
             "total_hits": result.get("estimatedTotalHits", 0)  # Add total hits count
         })
@@ -103,8 +139,86 @@ def _update_search_result(
         obj_in=update_data
     )
 
+def identify_primary_matches(results):
+    primary_matches = {}
+    for result in results:
+        index = result["indexUid"]
+        hits = result["hits"]
+        if hits:
+            primary_matches[index] = hits
+    return primary_matches
+
+
+def fetch_related_data(db,meiliresults,relationships,skip,limit):
+    related_results = {}
+    print(meiliresults,"mieli is this")
+    headers = _get_meilisearch_headers()
+    for result in meiliresults:
+        print(result,"this is the result in the meiliresult")
+        table_name = result.get("table_name")
+        result_data = result.get("result_data")
+        print(table_name,"this is the table_name")
+        print(result_data,"this is the result data")
+        print(relationships,"there are the relationships")
+        related_indexes = relationships.get(table_name,{})
+        print(related_indexes,"this is the related indexes")
+        for related_index, mapping in related_indexes.items():
+            related_results[related_index] = []
+
+            # For each hit, map related data
+            for hit in result_data:
+                key_value = hit[mapping["key"]]
+                 # Create a filter for the related index query
+                filter_condition = "{0} = '{1}'".format(mapping['foreign_key'],key_value)
+                print(key_value,"this is the key value")
+                query = {
+                    "q":"",
+                    "filter":filter_condition
+                }
+                print(query,"this is the query")
+                related_hits = _execute_search(related_index,query, headers)
+                print(related_hits,"related hits")
+                if related_hits:
+                    related_results[related_index].extend(related_hits)
+
+    return related_results
+
+def build_combined_results(primary_matches, related_results):
+    combined = {}
+
+    def add_unique_hits(existing_hits, new_hits):
+        print(existing_hits,"this is the existing hits")
+        print(new_hits,"this is the new hits")
+        seen = {frozenset(hit.items()) for hit in existing_hits}  # Create a set of frozensets for existing hits
+        for hit in new_hits:
+            hit_frozenset = frozenset(hit.items())
+            if hit_frozenset not in seen:
+                existing_hits.append(hit)
+                seen.add(hit_frozenset)
+
+    # Add primary matches
+    for result in primary_matches:
+        table_name = result.get("table_name")
+        result_data = result.get("result_data")
+        print(table_name,"build table name")
+        print(result_data,"build result data")
+        combined[table_name] = result_data
+
+    # Add related data
+    for related_index, related_hits in related_results.items():
+        if related_index in combined:
+            if related_hits:
+                add_unique_hits(combined[related_index], related_hits)
+        else:
+            if related_hits:
+                combined[related_index] = related_hits
+
+    return combined
+
+
 @app.task
 def process_term_search(
+    role_id: UUID4,
     search_id: str, 
     search_term: str, 
     table_ids: List[str] = None, 
@@ -113,6 +227,7 @@ def process_term_search(
     limit: int = 20
 ):
     """Process a term search asynchronously with pagination for specific table"""
+    print(role_id,"this is role id")
     search_result = None
     db = next(deps.get_db())
     
@@ -132,12 +247,20 @@ def process_term_search(
         if table_ids and len(table_ids) == 1:
             tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
             table_name = tables[0].name
+            display_name = tables[0].display_name
+            attributes_for_role = ["*"]
+            attributes_to_retrieve = tables[0].attributes_to_retrieve
+            relationship_with_other_index = tables[0].relationship_with_other_index
+            if attributes_to_retrieve:
+                attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                print(attributes_for_role,"these are attributes for role")
             search_queries.append(_create_query_dict(
                 table_name, 
                 search_query, 
                 exact_match,
                 skip,
-                limit
+                limit,
+                attributes_for_role
             ))
             
             # Execute search for single table
@@ -162,6 +285,7 @@ def process_term_search(
                             "limit": limit,
                         }
                         existing_table["table_id"] = table_ids[0]
+                        existing_table["display_name"] = display_name
                     else:
                         # Add pagination info to new table data
                         new_table_data["pagination"] = {
@@ -169,6 +293,7 @@ def process_term_search(
                             "limit": limit,
                         }
                         new_table_data["table_id"] = table_ids[0]
+                        new_table_data["display_name"] = display_name
                         # Add the new table data to existing results
                         existing_results.append(new_table_data)
                     
@@ -178,37 +303,66 @@ def process_term_search(
             if table_ids:
                 tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
                 for table in tables:
-                    #TODO: remove these conditionals
-                    if table.name in ["kp_employee", "name_age_rank"]:
-                        search_queries.append(_create_query_dict(
-                            table.name, 
-                            search_query, 
-                            exact_match,
-                            skip,
-                            limit
-                        ))
+                    attributes_to_retrieve = table.attributes_to_retrieve
+                    print(attributes_to_retrieve,"these are attributes to retrieve")
+                    attributes_for_role = ["*"]
+                    if attributes_to_retrieve:
+                        attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                        print(attributes_for_role,"these are attributes for role")
+                    search_queries.append(_create_query_dict(
+                        table.name, 
+                        search_query, 
+                        exact_match,
+                        skip,
+                        limit,
+                        attributes_for_role
+                    ))
             else:
-                tables = crud.indexed_table.get_all_tables(db=db)
+                tables = crud.indexed_table.get_tables_by_role(db=db,role_id=role_id)
                 for table in tables:
-                    #TODO: remove these conditionals
-                    if table.name in ["kp_employee", "name_age_rank"]:
-                        search_queries.append(_create_query_dict(
-                            table.name, 
-                            search_query, 
-                            exact_match,
-                            skip,
-                            limit
-                        ))
+                    attributes_to_retrieve = table.attributes_to_retrieve
+                    print(attributes_to_retrieve,"these are attributes to retrieve")
+                    attributes_for_role = ["*"]
+                    if attributes_to_retrieve:
+                        attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                        print(attributes_for_role,"these are attributes for role")
+                   
+                    search_queries.append(_create_query_dict(
+                        table.name, 
+                        search_query, 
+                        exact_match,
+                        skip,
+                        limit,
+                        attributes_for_role
+                    ))
 
             # Create a mapping of table names to their IDs
             table_name_to_id = {table.name: str(table.id) for table in tables}
+            table_name_to_relationships = {table.name: table.relationship_with_other_index for table in tables}
+            table_id_to_display_name = {str(table.id): table.display_name for table in tables}
 
+            print(table_id_to_display_name,"these are table id to display name")
             print(search_queries,"these are search queries")
             print(table_name_to_id,"these are table name to id")
+            print(table_name_to_relationships,"table name to relationships")
             
             meiliresults = _execute_multi_search(search_queries, headers)
+            # Create a deep copy of the original
 
-            print(meiliresults,"these are meiliresults")
+
+
+
+            # # handle the relations
+            # related_data = fetch_related_data(db,meiliresults,table_name_to_relationships,skip,limit)
+
+            # print(meiliresults,"these are the meiliresults")
+            # print(related_data,"these are related data")
+
+            # new_meiliresults =  build_combined_results(meiliresults,related_data)
+
+            # print(new_meiliresults,"these are meiliresults")
+
+            # print(related_data,"this is the realated data")
             
             # Add pagination info and table_id to each table's results
             for result in meiliresults:
@@ -217,6 +371,7 @@ def process_term_search(
                     "limit": limit,
                 }
                 result["table_id"] = table_name_to_id.get(result["table_name"])
+                result["display_name"] = table_id_to_display_name.get(result["table_id"])
                 print(result, "this is the result new")
 
 
@@ -254,6 +409,7 @@ def process_term_search(
 
 
 
+
 class DataProcessor(ABC):
     @abstractmethod
     def process(self, file_path: Path, filename: str) -> list[tuple[str, pd.DataFrame]]:
@@ -275,7 +431,7 @@ class ExcelProcessor(DataProcessor):
         results = []
         for sheet_name, df_dict in data["dataframes"].items():
             for table_name, df in df_dict.items():
-                index_name = f"{table_name}_{sheet_name}_{sanitized_filename}"
+                index_name = f"{sanitized_filename}"
                 index_name = re.sub(r'[^a-zA-Z0-9_-]', '_', index_name)
                 df = df.replace({np.nan: None})
                 results.append((index_name, df))
@@ -369,15 +525,24 @@ def _process_columns(db, table_result, columns_data: dict):
 def _index_in_meilisearch(df: pd.DataFrame, table_name: str):
     """Index dataframe in Meilisearch"""
     data = df.to_dict('records')
-    unique_ids = [str(uuid.uuid4()) for _ in range(len(data))]
+    primary_key = "id"
     
     for i, record in enumerate(data):
-        record["id"] = unique_ids[i]
+
+        if "id" not in record:
+            primary_key ="meili_id"
+
+            record["meili_id"] = str(uuid.uuid4())
+        for key,value in record.items():
+            if isinstance(value,(datetime.datetime,datetime.date)):
+                record[key] = value.isoformat()
+            elif isinstance(value,(datetime.time)):
+                record[key] = value.strftime('%H:%M:%S')
     
     crud.meilisearch.add_rows_to_index(
         index_name=table_name,
         rows=data,
-        primary_key="id"
+        primary_key=primary_key
     )
 
 def _process_single_file(db, db_id: str, file_info: dict, processors: dict, df_processor: DataFrameProcessor):

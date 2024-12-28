@@ -11,6 +11,8 @@ class IndexedTableBase(BaseModel):
     db_id: Optional[UUID4] = None
     synonyms: Optional[List[str]] = None
     sample_data: Optional[List[dict]] = None
+    display_name: Optional[str] = None
+    relationship_with_other_index : Optional[dict] = None
 
 
 # Properties to receive via API on creation

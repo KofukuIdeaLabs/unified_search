@@ -33,6 +33,16 @@ def init_db(db: Session) -> None:
         )
         member_role = crud.role.create(db, obj_in=member_role_in)
 
+    guest_role = crud.role.get_by_name(db, name=Role.GUEST["name"])
+    print(guest_role,"this is guest role")
+    if not guest_role:
+        guest_role_in = schemas.RoleCreate(
+            name=Role.GUEST["name"],
+            description=Role.GUEST["description"],
+        )
+        print(guest_role_in,"this is guest role in")
+        guest_role = crud.role.create(db, obj_in=guest_role_in)
+
 
 
     # Create 1st Organization
@@ -92,5 +102,20 @@ def init_db(db: Session) -> None:
             org_id=organization.id,
         )
         member_user = crud.app_user.create(db, obj_in=user_in)
+    guest_user = crud.app_user.get_by_email(db, email=settings.DEFAULT_GUEST_EMAIL)
+    if not guest_user:
+        organization = crud.organization.get_by_name(
+            db, name=settings.DEFAULT_ORGANIZATION_NAME
+        )
+
+        user_in = schemas.AppUserCreate(
+            email=settings.DEFAULT_GUEST_EMAIL,
+            password=settings.DEFAULT_GUEST_PASSWORD,
+            full_name=settings.DEFAULT_GUEST_FULL_NAME,
+            role_id=guest_role.id,
+            org_id=organization.id,
+        )
+        guest_user = crud.app_user.create(db, obj_in=user_in)
+
 
   

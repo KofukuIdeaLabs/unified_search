@@ -15,6 +15,7 @@ class SearchResultFormat(BaseModel):
     table_id:Optional[UUID4]=None
     pagination:Optional[PaginationInfo]=None
     total_hits:Optional[int]=None
+    display_name: Optional[str] = None
 
 
 # Shared properties

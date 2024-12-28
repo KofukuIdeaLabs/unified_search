@@ -7,24 +7,24 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
 import requests
-from app.celery_app.tasks import run_sql_query,process_term_search
+from app.celery_app.tasks import process_term_search
 from celery.result import AsyncResult
 from app.celery_app.celery import app
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
-
+from app.api.deps import CurrentActiveUserOrGuest
 
 router = APIRouter()
 
 
 @router.post("/term", response_model=schemas.SearchId)
 def create_search_term(
+    current_user_or_guest: CurrentActiveUserOrGuest,
     search_in: schemas.SearchCreate,
     db: Session = Depends(deps.get_db),
     skip:int = 0,
     limit:int = 20,
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
 ) -> Any:
     """
     Create a search and queue it for async processing.
@@ -32,7 +32,7 @@ def create_search_term(
     # Set up the search record
     search_in.search_type = constants.SearchType.TERM
     search_data = search_in.model_dump()
-    search_data["user_id"] = current_user.id
+    search_data["user_id"] = current_user_or_guest.id
     exact_match = search_in.input_search.exact_match
     optimize_search = search_in.input_search.optimize_search
     search_in = schemas.SearchCreate(**search_data)
@@ -46,6 +46,7 @@ def create_search_term(
     
     # Queue the search task with exact_match parameter and initial pagination
     task = process_term_search.apply_async(args=[
+        current_user_or_guest.role_id,
         str(search.id),
         search_in.input_search.search_text,
         search_in.input_search.table_ids if search_in.input_search.table_ids else None,
@@ -71,10 +72,11 @@ def create_search_term(
 
 @router.get("/download/result/{search_id}")
 def download_result(
+    current_user_or_guest: CurrentActiveUserOrGuest,
     search_id: uuid.UUID,
-    table_name: str | None = None,
+    table_id: uuid.UUID | None = None,
     db: Session = Depends(deps.get_db),
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
+ 
 ):
     search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
     if not search_result:
@@ -85,11 +87,19 @@ def download_result(
     
     # Write DataFrame(s) to Excel file in memory
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        if table_name:
+        if table_id:
+            # get table name
+            table = crud.indexed_table.get(db=db,id=table_id)
+            if not table:
+                raise HTTPException(status_code=404,detail="Table not found")
+            table_name = table.name 
+            display_name = table.display_name
             # Find the matching result for the requested table_name
             table_result = None
             for result in search_result.result:
-                if result["table_name"] == table_name:
+                print(result,"these are results")
+                print(str(table_id),"this is table id",str(result["table_id"]))
+                if str(result["table_id"]) == str(table_id):
                     table_result = result["result_data"]
                     break
                     
@@ -98,15 +108,15 @@ def download_result(
             
             # Convert table_result to pandas DataFrame and write to Excel
             df = pd.DataFrame(table_result)
-            df.to_excel(writer, sheet_name=table_name, index=False)
-            filename = f"{table_name}.xlsx"
+            df.to_excel(writer, sheet_name=display_name, index=False)
+            filename = f"{display_name}.xlsx"
         else:
             # Write all tables as separate sheets
             for result in search_result.result:
                 table_name = result["table_name"]
                 table_data = result["result_data"]
                 df = pd.DataFrame(table_data)
-                df.to_excel(writer, sheet_name=table_name, index=False)
+                df.to_excel(writer, sheet_name=table_name[:31], index=False)
             filename = "search_results.xlsx"
     
     # Seek to start of buffer
@@ -170,9 +180,9 @@ def _check_task_status(task_ids):
 
 @router.get("/result/{search_id}", response_model=schemas.SearchResult)
 def get_search_result(
+    current_user_or_guest: CurrentActiveUserOrGuest,
     search_id: uuid.UUID,
-    db: Session = Depends(deps.get_db),
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
+    db: Session = Depends(deps.get_db)
 ):
     """Get search results for a given search ID"""
     # Get and validate search and search result
@@ -187,16 +197,14 @@ def get_search_result(
         return _handle_term_search(search_result)
 
 
-
-
 @router.get("/result/{search_id}/{table_id}", response_model=schemas.SearchResult)
-def get_search_result_by_table(
+def get_search_result_by_table_id(
+    current_user_or_guest: CurrentActiveUserOrGuest,
     search_id: uuid.UUID,
     table_id: str,
     skip: int = 0,
     limit: int = 20,
-    db: Session = Depends(deps.get_db),
-    current_user: models.AppUser = Depends(deps.get_current_active_user),
+    db: Session = Depends(deps.get_db)
 ):
     """Get search results for a given search ID and table name"""
     # Get search and validate it exists
@@ -221,7 +229,6 @@ def get_search_result_by_table(
 
     table_name = table.name
 
-    print(table_name,"this is the table_name")
 
     # Find the specific table's data
     table_result = next(
@@ -229,20 +236,19 @@ def get_search_result_by_table(
         None
     )
 
-    print(table_result,"this is the table result")
     
     needs_new_search = True
     if table_result:
         # Get pagination info from the table's data
         table_pagination = table_result.get("pagination", {})
-        print(table_pagination,"this is the table pagination")
+
         current_max_offset = table_pagination.get("skip", 0) + table_pagination.get("limit", 0)
-        print(current_max_offset,"this is the current max offset")
+
         
         # If requesting data within our current range
         if skip + limit <= current_max_offset:
             needs_new_search = False
-            print("Using cached data")
+  
             
             # Update only this table's data with pagination
             table_result["result_data"] = table_result["result_data"][skip:skip + limit]
@@ -250,14 +256,15 @@ def get_search_result_by_table(
                 "skip": skip,
                 "limit": limit,
             }
-            print(table_result,"this is the table result after pagination")
+    
             search_result.status = "success"
             search_result.result = [table_result]
 
     if needs_new_search:
-        print("Triggering new search")
+ 
         # Need to fetch new data
         task = process_term_search.apply_async(args=[
+            current_user_or_guest.role_id,
             str(search.id),
             search.input_search["search_text"],
             [table_id],  # Only search the specific table
@@ -319,13 +326,13 @@ def get_recent_searches(
 
 @router.get("/autocomplete")
 def get_autocomplete(
+    current_user_or_guest: CurrentActiveUserOrGuest,
     search_text:str,
     db:Session = Depends(deps.get_db),
-    current_user: models.AppUser = Depends(deps.get_current_active_user)
 ):
     results = crud.meilisearch.search_autocomplete(
         search_query=search_text,
-        index_name="kp_employee"
+        index_name="phone_directory"
     )
     if len(results) > 0:
         return extract_matched_values(results)
