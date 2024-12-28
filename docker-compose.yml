@@ -1,6 +1,6 @@
 services:
 
-  db:
+  db_unified_search:
     image: postgres:12
     restart: always
     healthcheck:
@@ -10,7 +10,7 @@ services:
       start_period: 30s
       timeout: 10s
     volumes:
-      - db-data:/var/lib/postgresql/data/pgdata
+      - db_data_unified_search:/var/lib/postgresql/data/pgdata
     env_file:
       - .env
     environment:
@@ -19,20 +19,20 @@ services:
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
       - POSTGRES_DB=${POSTGRES_DB?Variable not set}
 
-  adminer:
+  adminer_unified_search:
     image: adminer
     restart: always
     depends_on:
-      - db
+      - db_unified_search
     environment:
       - ADMINER_DESIGN=pepa-linha-dark
 
-  prestart:
+  prestart_unified_search:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     build:
       context: ./backend
     depends_on:
-      db:
+      db_unified_search:
         condition: service_healthy
     command: bash scripts/prestart.sh
     env_file:
@@ -49,7 +49,7 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - POSTGRES_SERVER=db
+      - POSTGRES_SERVER=db_unified_search
       - POSTGRES_PORT=${POSTGRES_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
@@ -58,13 +58,13 @@ services:
     volumes:
       - ./backend/app:/app/app
 
-  backend_unified_search_army_signals:
+  backend_unified_search:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
     depends_on:
-      db:
+      db_unified_search:
         condition: service_healthy
-      prestart:
+      prestart_unified_search:
         condition: service_completed_successfully
     env_file:
       - .env
@@ -80,7 +80,7 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - POSTGRES_SERVER=db
+      - POSTGRES_SERVER=db_unified_search
       - POSTGRES_PORT=${POSTGRES_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
@@ -97,15 +97,15 @@ services:
       context: ./backend
     volumes:
       - ./backend/app:/app/app
-      - shared-storage:/storage
+      - shared_storage_unified_search:/storage
       - ./data_to_index:/app/data_to_index:rw
-  celery_worker_unified_search_army_signals:
+  celery_worker_unified_search:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     restart: always
     depends_on:
-      db:
+      db_unified_search:
         condition: service_healthy
-      prestart:
+      prestart_unified_search:
         condition: service_completed_successfully
     env_file:
       - .env
@@ -117,36 +117,36 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./logs:/app/logs
-      - shared-storage:/storage
+      - shared_storage_unified_search:/storage
       - ./data_to_index:/app/data_to_index:rw
     links:
-      - rabbitmq
+      - unified_search_rabbitmq
 
   
 
-  meilisearch:
-    image: getmeili/meilisearch
+  meilisearch_unified_search:
+    image: getmeili/meilisearch:v1.8.1
     restart: unless-stopped
     ports:
       - 7788:7700
     volumes:
-      # - meilisearch-data:/meili_data/data.ms
       - ./meili_data:/meili_data
 
     env_file:
       - .env
 
 
-  vectordb:
+  vectordb_unified_search:
     image: qdrant/qdrant:v1.2.2
     #    mem_limit: 450m
     restart: unless-stopped
     ports:
       - 6453:6333
     volumes:
-      - qdrant-data:/qdrant/storage
+      - qdrant_data_unified_search:/qdrant/storage
 
-  rabbitmq:
+  unified_search_rabbitmq:
+    container_name: unified_search_rabbitmq
     image: rabbitmq:3.9.29-management-alpine
     env_file:
       - .env
@@ -154,12 +154,16 @@ services:
       - "5679:5672"
       - "15679:15672"
     volumes:
-      - rabbitmq-data:/data
+      - rabbitmq_data_unified_search:/data
 
-
+  
 volumes:
-  db-data:
-  qdrant-data:
-  rabbitmq-data:
-  shared-storage:
+  db_data_unified_search:
+  qdrant_data_unified_search:
+  rabbitmq_data_unified_search:
+  shared_storage_unified_search:
+
+
+ 
+
 
