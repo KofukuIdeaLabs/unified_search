@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
 from app.api.deps import CurrentActiveUserOrGuest
+import time
 
 router = APIRouter()
 
@@ -133,6 +134,100 @@ def download_result(
     )
 
 
+# @router.get("/download/result/{search_id}")
+# def download_result(
+#     current_user_or_guest: CurrentActiveUserOrGuest,
+#     search_id: uuid.UUID,
+#     table_id: uuid.UUID | None = None,
+#     db: Session = Depends(deps.get_db),
+# ):
+#     # Retrieve the search object
+#     search = crud.search.get(db=db, id=search_id)
+#     if not search:
+#         raise HTTPException(status_code=404, detail="Search not found")
+
+#     # Trigger a Celery task for processing the search
+#     task = process_term_search.apply_async(args=[
+#         current_user_or_guest.role_id,
+#         str(search.id),
+#         search.input_search["search_text"],
+#         search.input_search["table_ids"] if search.input_search["table_ids"] else None,
+#         search.input_search["exact_match"]
+#     ])
+
+#     # Wait for task completion or timeout after 20 seconds
+#     task_result = None
+#     for _ in range(20):  # Poll every 1 second for 20 seconds
+#         task_result = _check_task_status([task.id])
+#         print(task_result,"this is the task result",task.id)
+#         if task_result == "success":
+#             print("Breaking")
+#             break
+#         print("sleeping")
+#         time.sleep(1)
+
+#     print(task_result,"this the the task result after the test")
+
+#     if (not task_result) or (task_result!="success"):
+#         print("here i am")
+#         raise HTTPException(status_code=408, detail="Search processing timeout")
+
+#     # Fetch the search result after task completion
+#     search_result = crud.search_result.get_by_column_first(
+#         db=db, filter_column="search_id", filter_value=search_id
+#     )
+#     if not search_result:
+#         raise HTTPException(status_code=404, detail="Search result not found")
+
+#     # Prepare an in-memory buffer for Excel data
+#     output = io.BytesIO()
+
+#     # Write DataFrame(s) to Excel file in memory
+#     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+#         if table_id:
+#             # Get table details
+#             table = crud.indexed_table.get(db=db, id=table_id)
+#             if not table:
+#                 raise HTTPException(status_code=404, detail="Table not found")
+#             table_name = table.name
+#             display_name = table.display_name
+
+#             # Find matching result for the requested table_id
+#             table_result = next(
+#                 (result["result_data"] for result in search_result.result if str(result["table_id"]) == str(table_id)),
+#                 None
+#             )
+#             if not table_result:
+#                 raise HTTPException(status_code=404, detail="Table not found in search result")
+
+#             # Write table data to an Excel sheet
+#             df = pd.DataFrame(table_result)
+#             df.to_excel(writer, sheet_name=display_name[:31], index=False)
+#             filename = f"{display_name}.xlsx"
+#         else:
+#             # Write all tables as separate sheets
+#             for result in search_result.result:
+#                 table_name = result["table_name"]
+#                 table_data = result["result_data"]
+#                 df = pd.DataFrame(table_data)
+#                 df.to_excel(writer, sheet_name=table_name[:31], index=False)
+#             filename = "search_results.xlsx"
+
+#     # Seek to the start of the buffer
+#     output.seek(0)
+
+#     # Return the Excel file as a streaming response
+#     headers = {
+#         "Content-Disposition": f'attachment; filename="{filename}"'
+#     }
+#     return StreamingResponse(
+#         output,
+#         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+#         headers=headers
+    # )
+
+
+
 def _get_and_validate_search(db: Session, search_id: uuid.UUID):
     """Get and validate search exists"""
     search = crud.search.get(db=db, id=search_id)
@@ -236,57 +331,78 @@ def get_search_result_by_table_id(
         None
     )
 
-    
-    needs_new_search = True
-    if table_result:
-        # Get pagination info from the table's data
-        table_pagination = table_result.get("pagination", {})
+    print(len(table_result.get("result_data")),"len of table result is this")
 
-        current_max_offset = table_pagination.get("skip", 0) + table_pagination.get("limit", 0)
+    
+    # needs_new_search = True
+    # if table_result:
+    #     # Get pagination info from the table's data
+    #     table_pagination = table_result.get("pagination", {})
+
+    #     current_max_offset = table_pagination.get("skip", 0) + table_pagination.get("limit", 0)
 
         
-        # If requesting data within our current range
-        if skip + limit <= current_max_offset:
-            needs_new_search = False
+    #     # If requesting data within our current range
+    #     if skip + limit <= current_max_offset:
+    #         needs_new_search = False
   
             
-            # Update only this table's data with pagination
+    #         # Update only this table's data with pagination
+    #         table_result["result_data"] = table_result["result_data"][skip:skip + limit]
+    #         table_result["pagination"] = {
+    #             "skip": skip,
+    #             "limit": limit,
+    #         }
+    
+    #         search_result.status = "success"
+    #         search_result.result = [table_result]
+
+    needs_new_search = True
+    if table_result:
+        # Get the total data length
+        result_data_length = len(table_result.get("result_data", []))
+
+        # If the requested range is within the current data length
+        if skip + limit <= result_data_length:
+            needs_new_search = False
+
+            # Slice the data using the skip and limit
             table_result["result_data"] = table_result["result_data"][skip:skip + limit]
             table_result["pagination"] = {
                 "skip": skip,
                 "limit": limit,
             }
-    
+
             search_result.status = "success"
             search_result.result = [table_result]
 
-    if needs_new_search:
+    # if needs_new_search:
  
-        # Need to fetch new data
-        task = process_term_search.apply_async(args=[
-            current_user_or_guest.role_id,
-            str(search.id),
-            search.input_search["search_text"],
-            [table_id],  # Only search the specific table
-            search.input_search.get("exact_match", False),
-            skip,
-            limit
-        ])
+    #     # Need to fetch new data
+    #     task = process_term_search.apply_async(args=[
+    #         current_user_or_guest.role_id,
+    #         str(search.id),
+    #         search.input_search["search_text"],
+    #         [table_id],  # Only search the specific table
+    #         search.input_search.get("exact_match", False),
+    #         skip,
+    #         limit
+    #     ])
         
-        # Update search result with new task ID
-        crud.search_result.update(
-            db=db,
-            db_obj=search_result,
-            obj_in=schemas.SearchResultUpdate(
-                status="pending",
-                extras={
-                    **search_result.extras,
-                    "task_id": task.id
-                }
-            )
-        )
-        search_result.result = []
-        search_result.status = "pending"
+    #     # Update search result with new task ID
+    #     crud.search_result.update(
+    #         db=db,
+    #         db_obj=search_result,
+    #         obj_in=schemas.SearchResultUpdate(
+    #             status="pending",
+    #             extras={
+    #                 **search_result.extras,
+    #                 "task_id": task.id
+    #             }
+    #         )
+    #     )
+    #     search_result.result = []
+    #     search_result.status = "pending"
     
     return search_result
     

@@ -28,22 +28,30 @@ import copy
 
 
 
-    
 
 def _build_search_query(search_term: str, exact_match: bool) -> str:
     """Build the search query string with exact match handling"""
     return f'"{search_term}"' if exact_match else search_term
 
-def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip: int = 0, limit: int = 20,attributes_to_search_on:List[str] = ["*"],filters=None) -> dict:
+def _create_query_dict(index_uid: str, search_query: str, exact_match: bool, skip, limit,attributes_to_search_on:List[str] = ["*"],filters=None) -> dict:
     """Create a single query dictionary for Meilisearch with pagination"""
-    return {
-        'indexUid': index_uid,
-        'q': search_query,
-        'limit': limit,
-        'offset': skip,
-        'attributesToSearchOn': attributes_to_search_on,
-        "filter": filters
-    }
+    if skip and limit:
+        # not using skip and limit right now, implementation issue. will figure out later
+        return {
+            'indexUid': index_uid,
+            'q': search_query,
+            'attributesToSearchOn': attributes_to_search_on,
+            "filter": filters
+        }
+    else:
+        print("no skip and limit")
+        return {
+            'indexUid': index_uid,
+            'q': search_query,
+            'attributesToSearchOn': attributes_to_search_on,
+            "filter": filters
+        }
+
 
 
 def _get_meilisearch_headers() -> dict:
@@ -90,18 +98,16 @@ def _execute_search(index_name,search_query:dict, headers: dict) -> List[dict]:
     print(response,"this is the response")
     result = response.json()
     print(result,"these are results")
-    
-    meiliresults = []
     for hit in result["hits"]:
         print(hit,"this is the hit")
         hit.pop("meili_id",None)
-    if result["hits"]:
-        meiliresults.append({
-            "table_name": index_name,
-            "result_data": result.get("hits"),
-            "total_hits": result.get("estimatedTotalHits", 0)  # Add total hits count
-        })
-    return meiliresults
+    return {
+
+        "table_name": index_name,
+        "result_data": result.get("hits"),
+        "total_hits": result.get("estimatedTotalHits", 0)  # Add total hits count
+    }
+
 
 def _update_search_result(
     db, 
@@ -113,6 +119,7 @@ def _update_search_result(
     error: str = None,
     extras: dict = None
 ):
+    print(search_result,"this is the search result")
     """Update the search result in the database"""
     if not search_result:
         return
@@ -139,81 +146,177 @@ def _update_search_result(
         obj_in=update_data
     )
 
-def identify_primary_matches(results):
-    primary_matches = {}
-    for result in results:
-        index = result["indexUid"]
-        hits = result["hits"]
-        if hits:
-            primary_matches[index] = hits
-    return primary_matches
 
 
-def fetch_related_data(db,meiliresults,relationships,skip,limit):
+
+
+
+def fetch_related_data(db, meiliresults, skip, limit,exact_match,table_name_to_relationships,table_name_to_attributes_for_role_mapping):
     related_results = {}
-    print(meiliresults,"mieli is this")
+    print("exact match is here",exact_match)
+    print(table_name_to_relationships,table_name_to_attributes_for_role_mapping,"mappings")
+    print("below is the table_name_to_attributes_for_role_mapping ",table_name_to_attributes_for_role_mapping)
+
     headers = _get_meilisearch_headers()
+
     for result in meiliresults:
-        print(result,"this is the result in the meiliresult")
+        print(result, "this is the result in the meiliresult")
         table_name = result.get("table_name")
-        result_data = result.get("result_data")
-        print(table_name,"this is the table_name")
-        print(result_data,"this is the result data")
-        print(relationships,"there are the relationships")
-        related_indexes = relationships.get(table_name,{})
-        print(related_indexes,"this is the related indexes")
+        result_data = result.get("result_data", [])
+        print(table_name, "this is the table_name")
+        print(result_data, "this is the result data")
+        print(table_name_to_relationships, "there are the table_name_to_relationships")
+        related_indexes = table_name_to_relationships.get(table_name, {})
+        print(related_indexes, "this is the related indexes")
+
+        if not related_indexes:
+            continue
+
         for related_index, mapping in related_indexes.items():
-            related_results[related_index] = []
+            print(mapping,"this is the mapping",table_name_to_attributes_for_role_mapping.get(related_index, None))
+            if related_index not in table_name_to_relationships:
+                continue
+
+            if not table_name_to_attributes_for_role_mapping.get(related_index, None) or (
+                mapping["foreign_key"] not in table_name_to_attributes_for_role_mapping.get(related_index, None) 
+                and table_name_to_attributes_for_role_mapping.get(related_index, None) != ["*"]
+            ):
+                continue
+
+        
+            print("related index is this",related_index)
+            if related_index not in related_results:
+                related_results[related_index] = {
+                    "result_data": [],
+                    "total_hits": 0,
+                    "table_name":related_index
+                }
 
             # For each hit, map related data
             for hit in result_data:
-                key_value = hit[mapping["key"]]
-                 # Create a filter for the related index query
-                filter_condition = "{0} = '{1}'".format(mapping['foreign_key'],key_value)
-                print(key_value,"this is the key value")
+                key_value = hit.get(mapping["key"])
+                if not key_value:
+                    print(f"Key {mapping['key']} not found in hit: {hit}")
+                    continue
+                else:
+                    print(f"Key {mapping['key']} found in hit: {hit}")
+
+                # Create a filter for the related index query
+                filter_condition = "{0} = {1}".format(json.dumps(mapping["foreign_key"]), json.dumps(key_value))
+                # if exact_match:
+                #     query = {
+                #         "q": "",
+                #         "filter": filter_condition,
+                        
+                #     }
+                # else:
+                    
                 query = {
-                    "q":"",
-                    "filter":filter_condition
+                    "q":  key_value,
+                    "attributesToSearchOn": [mapping["foreign_key"]],
+                    
                 }
-                print(query,"this is the query")
-                related_hits = _execute_search(related_index,query, headers)
-                print(related_hits,"related hits")
-                if related_hits:
-                    related_results[related_index].extend(related_hits)
+
+                print(query, "this is the query")
+                related_hits = _execute_search(related_index, query, headers)
+                print(related_hits, "related hits")
+
+                if related_hits and related_hits.get("result_data"):
+                    new_result_data = related_hits.get("result_data", [])
+                    total_hits = related_hits.get("total_hits", 0)
+                    table_name = related_hits.get("table_name")
+                    related_results[related_index]["result_data"].extend(new_result_data)
+                    related_results[related_index]["total_hits"] += total_hits
+                    related_results[related_index]["table_name"] = table_name
+
 
     return related_results
 
+
+# def build_combined_results(primary_matches, related_results):
+#     print("blelow are the primary matches")
+#     print(primary_matches)
+#     print("above are primary matches")
+#     print("below are the related results")
+#     print(related_results)
+#     print("Above are the related results")
+#     combined = {}
+
+#     def add_unique_hits(existing_hits, new_hits):
+#         print(existing_hits,"this is the existing hits")
+#         print(new_hits,"this is the new hits")
+#         seen = {frozenset(hit.items()) for hit in existing_hits.get("result_data")}  # Create a set of frozensets for existing hits
+#         for hit in new_hits.get("result_data"):
+#             hit_frozenset = frozenset(hit.items())
+#             if hit_frozenset not in seen:
+#                 existing_hits.get("result_data").append(hit)
+#                 seen.add(hit_frozenset)
+#         existing_hits["total_hits"] += new_hits["total_hits"]
+
+#     # Add primary matches
+#     for result in primary_matches:
+#         table_name = result.get("table_name")
+#         result_data = result.get("result_data")
+#         print(table_name,"build table name")
+#         print(result_data,"build result data")
+#         combined[table_name] = result
+
+#     # Add related data
+#     for related_index, related_hits in related_results.items():
+#         print("below are the related hits")
+#         print(related_index,related_hits,"this is the related hits")
+#         if related_index in combined:
+#             if related_hits:
+#                 add_unique_hits(combined[related_index], related_hits)
+#         else:
+#             if related_hits:
+#                 combined[related_index] = related_hits
+
+#     return combined
+
 def build_combined_results(primary_matches, related_results):
+    print("Below are the primary matches")
+    print(primary_matches)
+    print("Above are the primary matches")
+    print("Below are the related results")
+    print(related_results)
+    print("Above are the related results")
     combined = {}
 
     def add_unique_hits(existing_hits, new_hits):
-        print(existing_hits,"this is the existing hits")
-        print(new_hits,"this is the new hits")
-        seen = {frozenset(hit.items()) for hit in existing_hits}  # Create a set of frozensets for existing hits
-        for hit in new_hits:
+        print(existing_hits, "This is the existing hits")
+        print(new_hits, "This is the new hits")
+        seen = {frozenset(hit.items()) for hit in existing_hits.get("result_data")}  # Create a set of frozensets for existing hits
+        for hit in new_hits.get("result_data"):
             hit_frozenset = frozenset(hit.items())
             if hit_frozenset not in seen:
-                existing_hits.append(hit)
+                existing_hits.get("result_data").append(hit)
                 seen.add(hit_frozenset)
+        # Update total_hits to reflect the actual number of unique entries in result_data
+        existing_hits["total_hits"] = len(existing_hits["result_data"])
 
     # Add primary matches
     for result in primary_matches:
         table_name = result.get("table_name")
         result_data = result.get("result_data")
-        print(table_name,"build table name")
-        print(result_data,"build result data")
-        combined[table_name] = result_data
+        print(table_name, "Build table name")
+        print(result_data, "Build result data")
+        combined[table_name] = result
 
     # Add related data
     for related_index, related_hits in related_results.items():
+        print("Below are the related hits")
+        print(related_index, related_hits, "This is the related hits")
         if related_index in combined:
             if related_hits:
                 add_unique_hits(combined[related_index], related_hits)
         else:
             if related_hits:
                 combined[related_index] = related_hits
+                combined[related_index]["total_hits"] = len(related_hits["result_data"])  # Ensure total_hits is set correctly
 
     return combined
+
 
 
 @app.task
@@ -223,8 +326,8 @@ def process_term_search(
     search_term: str, 
     table_ids: List[str] = None, 
     exact_match: bool = False,
-    skip: int = 0,
-    limit: int = 20
+    skip = None,
+    limit = None,
 ):
     """Process a term search asynchronously with pagination for specific table"""
     print(role_id,"this is role id")
@@ -232,6 +335,8 @@ def process_term_search(
     db = next(deps.get_db())
     
     try:
+        table_name_to_relationships = {}
+        table_name_to_attributes_for_role_mapping = {}
         search_query = _build_search_query(search_term, exact_match)
         headers = _get_meilisearch_headers()
         search_queries = []
@@ -245,6 +350,7 @@ def process_term_search(
 
         # If table_ids contains exactly one table, we're doing single table pagination
         if table_ids and len(table_ids) == 1:
+            print("executing 1 table id")
             tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
             table_name = tables[0].name
             display_name = tables[0].display_name
@@ -252,8 +358,9 @@ def process_term_search(
             attributes_to_retrieve = tables[0].attributes_to_retrieve
             relationship_with_other_index = tables[0].relationship_with_other_index
             if attributes_to_retrieve:
-                attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                attributes_for_role = attributes_to_retrieve.get(str(role_id), ["*"])
                 print(attributes_for_role,"these are attributes for role")
+            table_name_to_attributes_for_role_mapping[table_name] = attributes_for_role
             search_queries.append(_create_query_dict(
                 table_name, 
                 search_query, 
@@ -262,9 +369,44 @@ def process_term_search(
                 limit,
                 attributes_for_role
             ))
+            table_name_to_relationships = {table_name:tables[0].relationship_with_other_index}
+
+            print(search_queries,"these are the search queires")
             
             # Execute search for single table
             meiliresults = _execute_multi_search(search_queries, headers)
+            related_data = fetch_related_data(db,meiliresults,skip,limit,exact_match,table_name_to_relationships,table_name_to_attributes_for_role_mapping)
+            new_meiliresults =  build_combined_results(meiliresults,related_data)
+            new_meiliresults_items = new_meiliresults.items()
+
+            result_data = []
+            
+            # Add pagination info and table_id to each table's results
+            for table_name,result in new_meiliresults_items:
+                if result.get("result_data"):
+                    print(table_name,"this is the table name in result")
+                    print(result,"this is the result")
+                    result["pagination"] = {
+                        "skip": skip if skip else 0,
+                        "limit": limit if limit else result["total_hits"],
+                    }
+                    result["table_id"] = table_ids[0]
+                    result["display_name"] = display_name
+                    result_data.append(result)
+
+
+            print("below is the meilisearch results")
+            print(meiliresults)
+            print("above is the meilisearch results")
+
+            print("below is the new meilisearch results")
+            print(new_meiliresults)
+            print("above is the new meilisearch results")
+
+            print("below is the search results")
+            print(search_result.result)
+            print("above is the search results")
+
             
             if search_result and search_result.result:
                 existing_results = search_result.result
@@ -273,31 +415,44 @@ def process_term_search(
                     None
                 )
                 
-                if meiliresults:
-                    new_table_data = meiliresults[0]
+                if new_meiliresults:
+                    print("no meilisearch results")
+                    new_table_data = new_meiliresults[table_name]
                     
                     if existing_table:
                         # Append new data to existing table
                         existing_table["result_data"].extend(new_table_data["result_data"])
                         existing_table["total_hits"] = new_table_data["total_hits"]
                         existing_table["pagination"] = {
-                            "skip": skip,
-                            "limit": limit,
+                            "skip": skip if skip else 0,
+                            "limit": limit if limit else new_table_data["total_hits"],
                         }
                         existing_table["table_id"] = table_ids[0]
                         existing_table["display_name"] = display_name
                     else:
                         # Add pagination info to new table data
                         new_table_data["pagination"] = {
-                            "skip": skip,
-                            "limit": limit,
+                            "skip": skip if skip else 0,
+                            "limit": limit if limit else new_table_data["total_hits"],
                         }
                         new_table_data["table_id"] = table_ids[0]
                         new_table_data["display_name"] = display_name
                         # Add the new table data to existing results
                         existing_results.append(new_table_data)
                     
-                    meiliresults = existing_results
+                result_data = existing_results
+                print("this is the result data when there is a result",result_data)
+
+               
+
+               
+
+
+                
+
+
+
+            
         else:
             # Original multi-table search logic
             if table_ids:
@@ -307,8 +462,9 @@ def process_term_search(
                     print(attributes_to_retrieve,"these are attributes to retrieve")
                     attributes_for_role = ["*"]
                     if attributes_to_retrieve:
-                        attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                        attributes_for_role = attributes_to_retrieve.get(str(role_id) ,["*"])
                         print(attributes_for_role,"these are attributes for role")
+                    table_name_to_attributes_for_role_mapping[table.name] = attributes_for_role
                     search_queries.append(_create_query_dict(
                         table.name, 
                         search_query, 
@@ -324,8 +480,10 @@ def process_term_search(
                     print(attributes_to_retrieve,"these are attributes to retrieve")
                     attributes_for_role = ["*"]
                     if attributes_to_retrieve:
-                        attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                        attributes_for_role = attributes_to_retrieve.get(str(role_id), ["*"])
                         print(attributes_for_role,"these are attributes for role")
+
+                    table_name_to_attributes_for_role_mapping[table.name] = attributes_for_role
                    
                     search_queries.append(_create_query_dict(
                         table.name, 
@@ -345,34 +503,42 @@ def process_term_search(
             print(search_queries,"these are search queries")
             print(table_name_to_id,"these are table name to id")
             print(table_name_to_relationships,"table name to relationships")
+            print(table_name_to_attributes_for_role_mapping,"table name to attributes for role_mapping")
             
             meiliresults = _execute_multi_search(search_queries, headers)
-            # Create a deep copy of the original
+            
 
 
+            # handle the relations
+            related_data = fetch_related_data(db,meiliresults,skip,limit,exact_match,table_name_to_relationships,table_name_to_attributes_for_role_mapping)
 
+            print(meiliresults,"these are the meiliresults")
+            print(related_data,"these are related data")
 
-            # # handle the relations
-            # related_data = fetch_related_data(db,meiliresults,table_name_to_relationships,skip,limit)
+            new_meiliresults =  build_combined_results(meiliresults,related_data)
 
-            # print(meiliresults,"these are the meiliresults")
-            # print(related_data,"these are related data")
+            print("below are the meiliresults new")
+            print(new_meiliresults)
+            print("above are the meiliresults new")
 
-            # new_meiliresults =  build_combined_results(meiliresults,related_data)
+            new_meiliresults = new_meiliresults.items()
 
-            # print(new_meiliresults,"these are meiliresults")
-
-            # print(related_data,"this is the realated data")
+            result_data = []
             
             # Add pagination info and table_id to each table's results
-            for result in meiliresults:
-                result["pagination"] = {
-                    "skip": skip,
-                    "limit": limit,
-                }
-                result["table_id"] = table_name_to_id.get(result["table_name"])
-                result["display_name"] = table_id_to_display_name.get(result["table_id"])
-                print(result, "this is the result new")
+            for table_name,result in new_meiliresults:
+                if result.get("result_data"):
+                    print(table_name,"this is the table name in result")
+                    print(result,"this is the result")
+                    result["pagination"] = {
+                        "skip": skip if skip else 0,
+                        "limit": limit if limit else result["total_hits"],
+                    }
+                    result["table_id"] = table_name_to_id.get(result["table_name"])
+                    result["display_name"] = table_id_to_display_name.get(result["table_id"])
+                    result_data.append(result)
+
+
 
 
         # Update extras
@@ -385,7 +551,7 @@ def process_term_search(
         _update_search_result(
             db, 
             search_result, 
-            meiliresults, 
+            result_data, 
             search_term,
             exact_match,
             table_ids,
@@ -606,7 +772,6 @@ def index_data_file(self, db_id: str, saved_files: List[dict]):
         raise self.retry(exc=e)
     finally:
         db.close()
-
 
 
 

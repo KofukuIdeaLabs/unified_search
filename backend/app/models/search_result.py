@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 class SearchResult(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid4)
     search_id = Column(UUID(as_uuid=True), ForeignKey("search.id"))
-    result = Column(mutable_json_type(dbtype=JSONB, nested=True), default={})
+    # result = Column(mutable_json_type(dbtype=JSONB, nested=True), default={})
+    result = Column(JSON)
     rating = Column(Integer, default=0)
     is_satisfied = Column(Boolean, default=None)
     extras = Column(mutable_json_type(dbtype=JSONB, nested=True), default={})
