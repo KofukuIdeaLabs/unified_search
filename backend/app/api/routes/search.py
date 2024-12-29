@@ -162,14 +162,15 @@ def download_result(
     
 
 
-@router.get("/download/task/{task_id}")
+@router.get("/download/task")
 def download_result(
     current_user_or_guest: CurrentActiveUserOrGuest,
+    search_id: uuid.UUID,
     task_id:str,
     db: Session = Depends(deps.get_db),
 ):
 
-    task_status = _check_task_status([task.id])
+    task_status = _check_task_status([task_id])
     if task_status == "success":
 
         # Fetch the search result after task completion
@@ -414,7 +415,7 @@ def get_autocomplete(
 ):
     results = crud.meilisearch.search_autocomplete(
         search_query=search_text,
-        index_name="phone_directory"
+        index_name="kp_employee"
     )
     if len(results) > 0:
         return extract_matched_values(results)
