@@ -52,8 +52,8 @@ def create_search_term(
         search_in.input_search.search_text,
         search_in.input_search.table_ids if search_in.input_search.table_ids else None,
         exact_match,
-        skip,
-        limit
+        0,
+        60
     ])
     
     # Update search result with task ID
@@ -71,138 +71,45 @@ def create_search_term(
 
 
 
-@router.get("/download/result/{search_id}")
-def download_result(
-    current_user_or_guest: CurrentActiveUserOrGuest,
-    search_id: uuid.UUID,
-    table_id: uuid.UUID | None = None,
-    db: Session = Depends(deps.get_db),
- 
-):
-    search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
-    if not search_result:
-        raise HTTPException(status_code=404,detail="Search result not found")
-
-    # Create an in-memory buffer
-    output = io.BytesIO()
-    
-    # Write DataFrame(s) to Excel file in memory
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        if table_id:
-            # get table name
-            table = crud.indexed_table.get(db=db,id=table_id)
-            if not table:
-                raise HTTPException(status_code=404,detail="Table not found")
-            table_name = table.name 
-            display_name = table.display_name
-            # Find the matching result for the requested table_name
-            table_result = None
-            for result in search_result.result:
-                print(result,"these are results")
-                print(str(table_id),"this is table id",str(result["table_id"]))
-                if str(result["table_id"]) == str(table_id):
-                    table_result = result["result_data"]
-                    break
-                    
-            if table_result is None:
-                raise HTTPException(status_code=404,detail="Table not found in search result")
-            
-            # Convert table_result to pandas DataFrame and write to Excel
-            df = pd.DataFrame(table_result)
-            df.to_excel(writer, sheet_name=display_name, index=False)
-            filename = f"{display_name}.xlsx"
-        else:
-            # Write all tables as separate sheets
-            for result in search_result.result:
-                table_name = result["table_name"]
-                table_data = result["result_data"]
-                df = pd.DataFrame(table_data)
-                df.to_excel(writer, sheet_name=table_name[:31], index=False)
-            filename = "search_results.xlsx"
-    
-    # Seek to start of buffer
-    output.seek(0)
-    
-    # Return the Excel file as a streaming response
-    headers = {
-        'Content-Disposition': f'attachment; filename="{filename}"'
-    }
-    return StreamingResponse(
-        output,
-        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers=headers
-    )
-
-
 # @router.get("/download/result/{search_id}")
 # def download_result(
 #     current_user_or_guest: CurrentActiveUserOrGuest,
 #     search_id: uuid.UUID,
 #     table_id: uuid.UUID | None = None,
 #     db: Session = Depends(deps.get_db),
+ 
 # ):
-#     # Retrieve the search object
-#     search = crud.search.get(db=db, id=search_id)
-#     if not search:
-#         raise HTTPException(status_code=404, detail="Search not found")
-
-#     # Trigger a Celery task for processing the search
-#     task = process_term_search.apply_async(args=[
-#         current_user_or_guest.role_id,
-#         str(search.id),
-#         search.input_search["search_text"],
-#         search.input_search["table_ids"] if search.input_search["table_ids"] else None,
-#         search.input_search["exact_match"]
-#     ])
-
-#     # Wait for task completion or timeout after 20 seconds
-#     task_result = None
-#     for _ in range(20):  # Poll every 1 second for 20 seconds
-#         task_result = _check_task_status([task.id])
-#         print(task_result,"this is the task result",task.id)
-#         if task_result == "success":
-#             print("Breaking")
-#             break
-#         print("sleeping")
-#         time.sleep(1)
-
-#     print(task_result,"this the the task result after the test")
-
-#     if (not task_result) or (task_result!="success"):
-#         print("here i am")
-#         raise HTTPException(status_code=408, detail="Search processing timeout")
-
-#     # Fetch the search result after task completion
-#     search_result = crud.search_result.get_by_column_first(
-#         db=db, filter_column="search_id", filter_value=search_id
-#     )
+#     search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
 #     if not search_result:
-#         raise HTTPException(status_code=404, detail="Search result not found")
+#         raise HTTPException(status_code=404,detail="Search result not found")
 
-#     # Prepare an in-memory buffer for Excel data
+#     # Create an in-memory buffer
 #     output = io.BytesIO()
-
+    
 #     # Write DataFrame(s) to Excel file in memory
-#     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+#     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
 #         if table_id:
-#             # Get table details
-#             table = crud.indexed_table.get(db=db, id=table_id)
+#             # get table name
+#             table = crud.indexed_table.get(db=db,id=table_id)
 #             if not table:
-#                 raise HTTPException(status_code=404, detail="Table not found")
-#             table_name = table.name
+#                 raise HTTPException(status_code=404,detail="Table not found")
+#             table_name = table.name 
 #             display_name = table.display_name
-
-#             # Find matching result for the requested table_id
-#             table_result = next(
-#                 (result["result_data"] for result in search_result.result if str(result["table_id"]) == str(table_id)),
-#                 None
-#             )
-#             if not table_result:
-#                 raise HTTPException(status_code=404, detail="Table not found in search result")
-
-#             # Write table data to an Excel sheet
+#             # Find the matching result for the requested table_name
+#             table_result = None
+#             for result in search_result.result:
+#                 print(result,"these are results")
+#                 print(str(table_id),"this is table id",str(result["table_id"]))
+#                 if str(result["table_id"]) == str(table_id):
+#                     table_result = result["result_data"]
+#                     break
+                    
+#             if table_result is None:
+#                 raise HTTPException(status_code=404,detail="Table not found in search result")
+            
+#             # Convert table_result to pandas DataFrame and write to Excel
 #             df = pd.DataFrame(table_result)
-#             df.to_excel(writer, sheet_name=display_name[:31], index=False)
+#             df.to_excel(writer, sheet_name=display_name, index=False)
 #             filename = f"{display_name}.xlsx"
 #         else:
 #             # Write all tables as separate sheets
@@ -212,19 +119,93 @@ def download_result(
 #                 df = pd.DataFrame(table_data)
 #                 df.to_excel(writer, sheet_name=table_name[:31], index=False)
 #             filename = "search_results.xlsx"
-
-#     # Seek to the start of the buffer
+    
+#     # Seek to start of buffer
 #     output.seek(0)
-
+    
 #     # Return the Excel file as a streaming response
 #     headers = {
-#         "Content-Disposition": f'attachment; filename="{filename}"'
+#         'Content-Disposition': f'attachment; filename="{filename}"'
 #     }
 #     return StreamingResponse(
 #         output,
-#         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+#         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 #         headers=headers
-    # )
+#     )
+
+
+@router.get("/download/result/{search_id}")
+def download_result(
+    current_user_or_guest: CurrentActiveUserOrGuest,
+    search_id: uuid.UUID,
+    table_id: uuid.UUID | None = None,
+    db: Session = Depends(deps.get_db),
+):
+    # Retrieve the search object
+    search = crud.search.get(db=db, id=search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Search not found")
+
+    # Trigger a Celery task for processing the search
+    task = process_term_search.apply_async(args=[
+        current_user_or_guest.role_id,
+        str(search.id),
+        search.input_search["search_text"],
+        [table_id] if table_id else search.input_search["table_ids"],
+        search.input_search["exact_match"],
+        0,
+        1000
+    ])
+
+    return {"task_id":task.id}
+
+    
+
+
+@router.get("/download/task/{task_id}")
+def download_result(
+    current_user_or_guest: CurrentActiveUserOrGuest,
+    task_id:str,
+    db: Session = Depends(deps.get_db),
+):
+
+    task_status = _check_task_status([task.id])
+    if task_status == "success":
+
+        # Fetch the search result after task completion
+        search_result = crud.search_result.get_by_column_first(
+            db=db, filter_column="search_id", filter_value=search_id
+        )
+        if not search_result:
+            raise HTTPException(status_code=404, detail="Search result not found")
+
+        # Prepare an in-memory buffer for Excel data
+        output = io.BytesIO()
+
+        # Write DataFrame(s) to Excel file in memory
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                # Write all tables as separate sheets
+                for result in search_result.result:
+                    table_name = result["table_name"]
+                    table_data = result["result_data"]
+                    df = pd.DataFrame(table_data)
+                    df.to_excel(writer, sheet_name=table_name[:31], index=False)
+                filename = "search_results.xlsx"
+
+        # Seek to the start of the buffer
+        output.seek(0)
+
+        # Return the Excel file as a streaming response
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers
+        )
+    else:
+        return {"status":task_status}
 
 
 
@@ -331,7 +312,7 @@ def get_search_result_by_table_id(
         None
     )
 
-    print(len(table_result.get("result_data")),"len of table result is this")
+    # print(len(table_result.get("result_data")),"len of table result is this")
 
     
     # needs_new_search = True
@@ -357,52 +338,37 @@ def get_search_result_by_table_id(
     #         search_result.status = "success"
     #         search_result.result = [table_result]
 
-    needs_new_search = True
     if table_result:
         # Get the total data length
         result_data_length = len(table_result.get("result_data", []))
 
-        # If the requested range is within the current data length
-        if skip + limit <= result_data_length:
-            needs_new_search = False
+        # If skip is greater than or equal to the data length, return empty
+        if skip >= result_data_length:
+            table_result["result_data"] = []
+            table_result["pagination"] = {
+                "skip": skip,
+                "limit": limit,
+            }
+            search_result.status = "success"
+            search_result.result = [table_result]
+        else:
+            # Calculate the end index, ensuring it doesn't exceed the data length
+            end_index = min(skip + limit, result_data_length)
 
-            # Slice the data using the skip and limit
-            table_result["result_data"] = table_result["result_data"][skip:skip + limit]
+            # Slice the data from skip to end_index
+            table_result["result_data"] = table_result["result_data"][skip:end_index]
+
+            # Add pagination details
             table_result["pagination"] = {
                 "skip": skip,
                 "limit": limit,
             }
 
+            # Set the result
             search_result.status = "success"
             search_result.result = [table_result]
 
-    # if needs_new_search:
- 
-    #     # Need to fetch new data
-    #     task = process_term_search.apply_async(args=[
-    #         current_user_or_guest.role_id,
-    #         str(search.id),
-    #         search.input_search["search_text"],
-    #         [table_id],  # Only search the specific table
-    #         search.input_search.get("exact_match", False),
-    #         skip,
-    #         limit
-    #     ])
-        
-    #     # Update search result with new task ID
-    #     crud.search_result.update(
-    #         db=db,
-    #         db_obj=search_result,
-    #         obj_in=schemas.SearchResultUpdate(
-    #             status="pending",
-    #             extras={
-    #                 **search_result.extras,
-    #                 "task_id": task.id
-    #             }
-    #         )
-    #     )
-    #     search_result.result = []
-    #     search_result.status = "pending"
+
     
     return search_result
     
