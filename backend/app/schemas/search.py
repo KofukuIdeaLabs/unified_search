@@ -1,7 +1,7 @@
 from typing import Optional,List
 from pydantic import UUID4, BaseModel
 from datetime import datetime
-from typing import Union
+from typing import Union,Any
 
 
 
@@ -26,11 +26,10 @@ class GeneratePromptOutputResponse(BaseModel):
 
 
 
-
-
 class SearchInput(BaseModel):
-    search_text: str    
+    query: Any    
     db_id: UUID4
+    
     table_ids: Optional[List[UUID4]] = []
     row_limit: Optional[int] = 50
     exact_match: Optional[bool] = False

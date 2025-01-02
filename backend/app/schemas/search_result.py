@@ -45,7 +45,7 @@ class SearchResultInDBBase(SearchResultBase):
     id: UUID4
     created_at: datetime
     updated_at: datetime
-    search_text: str
+    search_text: Any
     status: str = "pending"
 
     class Config:

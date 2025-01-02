@@ -25,6 +25,7 @@ class FormTemplate(Base):
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    extras = Column(MutableDict.as_mutable(JSONB), nullable=True)
     organization_id = Column(ForeignKey("organization.id"), nullable=False)
     owner_id = Column(ForeignKey("app_user.id"), nullable=False)
     deleted_at = Column(DateTime, default=None, nullable=True)

@@ -11,6 +11,7 @@ class FormTemplateBase(BaseModel):
     template: Optional[list] = None
     organization_id: Optional[UUID4] = None
     owner_id: Optional[UUID4] = None
+    extras : Optional[dict] = None
 
 
 # Properties to receive via API on creation

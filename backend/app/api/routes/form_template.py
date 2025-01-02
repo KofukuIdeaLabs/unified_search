@@ -1,3 +1,4 @@
+from turtle import title
 from uuid import uuid4
 from typing import Any, List
 from pydantic.types import UUID4
@@ -11,7 +12,7 @@ from app.core.security import get_password_hash, verify_password
 from app.api.deps import CurrentActiveUser,CurrentActiveSuperuser
 from app.constants.form_template_element import FormTemplateElement
 import copy
-from app.utils import create_or_update_form_instance,delete_form_instance,assign_uuids_to_template
+from app.utils import create_or_update_form_instance,delete_form_instance,assign_uuids_to_template,fetch_aliases_for_column_name
 
 
 router = APIRouter()
@@ -104,7 +105,7 @@ def add_field_to_form_template(
     # fetch the field from form_template_elements
     form_template_element = crud.form_template_element.get_by_column_first(db=db,filter_column="name",filter_value=FormTemplateElement.FIELD_GROUP["name"])
     # here add id to the uuid to the filed
-    form_template_element_data = form_template_element.template
+    form_template_element_data = copy.deepcopy(form_template_element.template)
     assign_uuids_to_template(form_template_element_data)
     print(form_template.template,"this is before")
     print(form_template_element_data,"this is the data")
@@ -155,7 +156,30 @@ def delete_form_template(
     return form_template
 
 
-@router.get("/{form_template_id}/field/{field_id}/attribute/{attribute_name}/options",response_model=schemas.FormTemplateFieldOptions)
+@router.delete("/{form_template_id}/field/{field_id}",response_model=schemas.FormTemplate)
+def delete_field_from_form_template(
+    current_user: CurrentActiveSuperuser,
+    form_template_id:int,
+    field_id:UUID4,
+    db: Session = Depends(deps.get_db)
+) -> Any:
+    """
+    Delete a Field from Form Template
+    """
+    form_template = crud.form_template.get_by_column_first(db=db,filter_column="id",filter_value=form_template_id)
+    if not form_template:
+        raise HTTPException(status_code=404,detail="Form Template Doesn't Exists.")
+    template = form_template.template
+    print(template,"this is the template")
+    updated_template = list(filter(lambda entry: entry.get('id') != str(field_id), template))
+    form_template_update_in = schemas.FormTemplateUpdate(template=updated_template)
+    form_template = crud.form_template.update(db=db,db_obj=form_template,obj_in=form_template_update_in)
+    create_or_update_form_instance(db=db,form_template=form_template)
+    return form_template
+
+
+@router.get("/{form_template_id}/field/{field_id}/attribute/{attribute_name}/options",#response_model=schemas.FormTemplateFieldOptions
+)
 def get_dynamic_options_for_the_field(
     current_user: CurrentActiveSuperuser,
     form_template_id:int,
@@ -202,7 +226,9 @@ def get_dynamic_options_for_the_field(
         )
         if display_label:
             print(display_label,"this is the display label")
-            options = [{"label":"Father Name","value":"f_name"},{"label":"Mother Name","value":"m_name"}]
+            # fetch the aliases
+            if display_label.get("value"):
+                options = fetch_aliases_for_column_name(db,display_label.get("value"),form_template=form_template)
     return {"options":options}
    
 

@@ -3,6 +3,7 @@ class FormTemplateElement:
         "name": "field_group",
         "template": {
             "id": None,
+            "is_saved":False,
             "elements": [
                 [
                     {

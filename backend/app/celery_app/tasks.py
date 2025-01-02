@@ -57,14 +57,14 @@ def extract_table_names(sql_query):
 
 
 @app.task(bind=True)
-def run_sql_query(self, search_result_id, query):
+def run_sql_query(self, search_id, query):
     try:
         db = next(deps.get_db())
         if not query or not isinstance(query, list):
             raise ValueError("Query must be a non-empty list")
             
         sql = query[0]
-        print(f"Task {search_result_id}: Running query: {sql}")
+        print(f"Task {search_id}: Running query: {sql}")
         
         # Execute query and get results
         query_result = [dict(row._mapping) for row in db.execute(text(sql)).fetchall()]
@@ -74,7 +74,7 @@ def run_sql_query(self, search_result_id, query):
         }
         
         # Get current results and append new result
-        search_result = crud.search_result.get(db=db, id=search_result_id)
+        search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
         current_results = search_result.result or []
         current_results.append(result)
         
@@ -116,7 +116,10 @@ def _get_meilisearch_headers() -> dict:
 def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dict]:
     """Execute multi-search request to Meilisearch"""
     url = "http://meilisearch:7700/multi-search"
+    
     payload = json.dumps({"queries": search_queries})
+
+    print(payload,"thisi is the payload")
     
     response = requests.request("POST", url, headers=headers, data=payload)
     results = response.json()
@@ -339,6 +342,117 @@ def process_term_search(
             search_term, 
             exact_match,
             table_ids,
+            error=str(e)
+        )
+        raise
+    
+    finally:
+        db.close()
+
+
+
+@app.task(bind=True)
+def execute_meilisearch_query(self,role_id,search_id,search_query ,queries,table_ids,skip,limit):
+    search_result = None
+    db = next(deps.get_db())
+
+    
+    try:
+        headers = _get_meilisearch_headers()
+        search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
+
+        if table_ids and len(table_ids) == 1:
+            tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
+            table_name = tables[0].name
+            display_name = tables[0].display_name
+            meiliresults = _execute_multi_search(queries, headers)
+            if search_result and search_result.result:
+                existing_results = search_result.result
+                existing_table = next(
+                    (result for result in existing_results if result.get("table_name") == table_name),
+                    None
+                )
+                
+                if meiliresults:
+                    new_table_data = meiliresults[0]
+                    
+                    if existing_table:
+                        # Append new data to existing table
+                        existing_table["result_data"].extend(new_table_data["result_data"])
+                        existing_table["total_hits"] = new_table_data["total_hits"]
+                        existing_table["pagination"] = {
+                            "skip": skip,
+                            "limit": limit,
+                        }
+                        existing_table["table_id"] = table_ids[0]
+                        existing_table["display_name"] = display_name
+                    else:
+                        # Add pagination info to new table data
+                        new_table_data["pagination"] = {
+                            "skip": skip,
+                            "limit": limit,
+                        }
+                        new_table_data["table_id"] = table_ids[0]
+                        new_table_data["display_name"] = display_name
+                        # Add the new table data to existing results
+                        existing_results.append(new_table_data)
+                    
+                    meiliresults = existing_results
+
+        else:
+            if table_ids:
+                tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
+                meiliresults = _execute_multi_search(queries, headers)
+            else:
+                tables = crud.indexed_table.get_tables_by_role(db=db,role_id=role_id)
+                meiliresults = _execute_multi_search(queries, headers)
+
+
+        
+            print(search_result,"this is the search result")
+            table_name_to_id = {table.name: str(table.id) for table in tables}
+            table_id_to_display_name = {str(table.id): table.display_name for table in tables}
+
+
+            # Add pagination info and table_id to each table's results
+            for result in meiliresults:
+                result["pagination"] = {
+                    "skip": skip,
+                    "limit": limit,
+                }
+                result["table_id"] = table_name_to_id.get(result["table_name"])
+                result["display_name"] = table_id_to_display_name.get(result["table_id"])
+                print(result, "this is the result new")
+
+
+        # Update extras
+        extras = {
+            **(search_result.extras or {}),
+            "exact_match": False,
+            "table_ids": table_ids,
+        }
+
+        _update_search_result(
+            db, 
+            search_result, 
+            meiliresults, 
+            search_term=search_query,
+            exact_match=False,
+            table_ids=table_ids,
+            extras=extras
+        )
+            
+            
+            
+    except Exception as e:
+        print(e,"this is the error")
+        _update_search_result(
+            db, 
+            search_result, 
+            [], 
+            search_term=search_query, 
+            exact_match=False,
+            table_ids=table_ids,
             error=str(e)
         )
         raise

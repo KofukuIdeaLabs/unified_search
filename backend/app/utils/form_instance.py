@@ -10,7 +10,8 @@ def delete_form_instance(db,form_template_id):
 
 def generate_form_instance_from_form_template(form_template):
     template = form_template.template
-    new_template = []
+    new_template = []  # Final result: a list of lists
+    current_group = []  # Temporary list to hold the current group of two field_info dicts
 
     # Iterate over each field in the template
     for field in template:
@@ -36,7 +37,7 @@ def generate_form_instance_from_form_template(form_template):
                 attr_key = attr.get("name")  # Extract the title
                 attr_value = attr.get("value")  # Extract the value
 
-                 # If attr_value is a dictionary, extract the actual value
+                # If attr_value is a dictionary, extract the actual value
                 if isinstance(attr_value, dict):
                     attr_value = attr_value.get("value")  # Extract 'value' key if exists
                 
@@ -44,9 +45,19 @@ def generate_form_instance_from_form_template(form_template):
                 for target_key, source_key in field_mapping.items():
                     if attr_key == source_key:  # Check if the attribute matches a mapped source key
                         field_info[target_key] = attr_value
+                field_info["exact_match"] = False
         
-        # Append the gathered information to the new template
-        new_template.append(field_info)
+        # Add the field_info to the current group
+        current_group.append(field_info)
+
+        # If the current group has two items, add it to new_template and reset the group
+        if len(current_group) == 2:
+            new_template.append(current_group)
+            current_group = []
+    
+    # If there are any remaining items in the current group, add them as the last group
+    if current_group:
+        new_template.append(current_group)
 
     return new_template
 
