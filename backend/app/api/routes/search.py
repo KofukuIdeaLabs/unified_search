@@ -145,6 +145,7 @@ def create_search_query(
         data["name"] = "search"
         data.pop("input_search",None)
         print(data,"this is the data")
+        print("Data to be send to crawlermlservice", data)
         response = requests.post(url, json=data)
         response.raise_for_status()  # Raises an HTTPError for bad status codes
         search_result_in = schemas.SearchResultCreate(search_id=search.id,extras={"external_search_id":response.json()})
@@ -216,62 +217,124 @@ def download_result(
     search_id: uuid.UUID,
     table_id: uuid.UUID | None = None,
     db: Session = Depends(deps.get_db),
- 
 ):
-    search_result = crud.search_result.get_by_column_first(db=db,filter_column="search_id",filter_value=search_id)
-    if not search_result:
-        raise HTTPException(status_code=404,detail="Search result not found")
+    # Retrieve the search object
+    search = crud.search.get(db=db, id=search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Search not found")
 
-    # Create an in-memory buffer
-    output = io.BytesIO()
+    if search.search_type == SearchType.TERM:
+        task = process_term_search.apply_async(args=[
+        current_user_or_guest.role_id,
+        str(search.id),
+        search.input_search["query"],
+        [table_id] if table_id else search.input_search["table_ids"],
+        search.input_search["exact_match"],
+        0,
+        1000
+    ])
+        task_id = task.id
     
-    # Write DataFrame(s) to Excel file in memory
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        if table_id:
-            # get table name
-            table = crud.indexed_table.get(db=db,id=table_id)
-            if not table:
-                raise HTTPException(status_code=404,detail="Table not found")
-            table_name = table.name 
-            display_name = table.display_name
-            # Find the matching result for the requested table_name
-            table_result = None
-            for result in search_result.result:
-                print(result,"these are results")
-                print(str(table_id),"this is table id",str(result["table_id"]))
-                if str(result["table_id"]) == str(table_id):
-                    table_result = result["result_data"]
-                    break
-                    
-            if table_result is None:
-                raise HTTPException(status_code=404,detail="Table not found in search result")
-            
-            # Convert table_result to pandas DataFrame and write to Excel
-            df = pd.DataFrame(table_result)
-            df.to_excel(writer, sheet_name=display_name, index=False)
-            filename = f"{display_name}.xlsx"
+    else:
+        #TODO: handle query download
+        task_id = search.id
+
+    # Trigger a Celery task for processing the search
+    
+
+    return {"task_id":task_id}
+
+    
+
+
+@router.get("/download/task")
+def download_task(
+    current_user_or_guest: CurrentActiveUserOrGuest,
+    search_id: uuid.UUID,
+    task_id:str,
+    db: Session = Depends(deps.get_db),
+):
+
+    search = crud.search.get(db=db,id=search_id)
+    print(search.id,"this is the search id")
+    print(task_id,"this is the task id")
+    if not search:
+        raise HTTPException(status_code=404, detail="Search not found")
+    if task_id == str(search.id): #it means i am return existing results for query
+        search_result = crud.search_result.get_by_column_first(
+                db=db, filter_column="search_id", filter_value=search_id
+            )
+        if not search_result:
+            raise HTTPException(status_code=404, detail="Search result not found")
+
+        print(search_result.result,"this is the search result")
+
+        # Prepare an in-memory buffer for Excel data
+        output = io.BytesIO()
+
+        # Write DataFrame(s) to Excel file in memory
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                # Write all tables as separate sheets
+                for result in search_result.result:
+                    table_name = result["table_name"]
+                    table_data = result["result_data"]
+                    df = pd.DataFrame(table_data)
+                    df.to_excel(writer, sheet_name=table_name[:31], index=False)
+                filename = "search_results.xlsx"
+
+        # Seek to the start of the buffer
+        output.seek(0)
+
+        # Return the Excel file as a streaming response
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers
+        )
+    else:
+
+        task_status = _check_task_status([task_id])
+        if task_status == "success":
+
+            # Fetch the search result after task completion
+            search_result = crud.search_result.get_by_column_first(
+                db=db, filter_column="search_id", filter_value=search_id
+            )
+            if not search_result:
+                raise HTTPException(status_code=404, detail="Search result not found")
+
+            print(search_result.result,"this is the search result")
+
+            # Prepare an in-memory buffer for Excel data
+            output = io.BytesIO()
+
+            # Write DataFrame(s) to Excel file in memory
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                    # Write all tables as separate sheets
+                    for result in search_result.result:
+                        table_name = result["table_name"]
+                        table_data = result["result_data"]
+                        df = pd.DataFrame(table_data)
+                        df.to_excel(writer, sheet_name=table_name[:31], index=False)
+                    filename = "search_results.xlsx"
+
+            # Seek to the start of the buffer
+            output.seek(0)
+
+            # Return the Excel file as a streaming response
+            headers = {
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+            return StreamingResponse(
+                output,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers=headers
+            )
         else:
-            # Write all tables as separate sheets
-            for result in search_result.result:
-                table_name = result["table_name"]
-                table_data = result["result_data"]
-                df = pd.DataFrame(table_data)
-                df.to_excel(writer, sheet_name=table_name, index=False)
-            filename = "search_results.xlsx"
-    
-    # Seek to start of buffer
-    output.seek(0)
-    
-    # Return the Excel file as a streaming response
-    headers = {
-        'Content-Disposition': f'attachment; filename="{filename}"'
-    }
-    return StreamingResponse(
-        output,
-        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers=headers
-    )
-
+            return {"status":task_status}
 
 def _get_and_validate_search(db: Session, search_id: uuid.UUID):
     """Get and validate search exists"""
@@ -323,8 +386,17 @@ def _process_sql_queries(db: Session, role_id,search_id,search_query, external_s
 
 
             if query_type == QueryType.MEILISEARCH:
-                task_ids = [execute_meilisearch_query.apply_async(args=[role_id,search_id,search_query,queries,table_ids,skip,limit]).id]
                 
+                # We are only limited to kp_employee so we will only be including kp_employee index
+                # Will be removed in production
+
+                # if queries:
+                #     # insert kp_employee for testing
+                #     kp_employee_query = queries[0]
+                #     kp_employee_query["indexUid"] = "kp_employee"
+                #     queries = [kp_employee_query]
+                
+                task_ids = [execute_meilisearch_query.apply_async(args=[role_id,search_id,search_query,queries,table_ids,skip,limit]).id]
             else:
 
                 # Create tasks for each query
@@ -404,7 +476,7 @@ def get_search_result(
 
     # Handle query searches
     extras = search_result.extras or {}
-    external_search_id = extras.get("external_search_id")
+    external_search_id = extras.get("external_search_id") #api service
     if not external_search_id:
         raise HTTPException(status_code=400, detail="External search ID not found")
 
@@ -466,6 +538,8 @@ def get_search_result_by_table_id(
         (result for result in (search_result.result or []) if result.get("table_name") == table_name),
         None
     )
+
+    print(table_result,"this is the table result")
 
     
     needs_new_search = True
@@ -567,7 +641,7 @@ def get_autocomplete(
 ):
     results = crud.meilisearch.search_autocomplete(
         search_query=search_text,
-        index_name="kp_employee"
+        index_name=None # "kp_employee"
     )
     if len(results) > 0:
         return extract_matched_values(results)

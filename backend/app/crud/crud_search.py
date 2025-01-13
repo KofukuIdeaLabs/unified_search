@@ -30,7 +30,7 @@ class CRUDSearch(CRUDBase[Search, SearchCreate, SearchUpdate]):
     
     def get_recent_searches(self, db: Session, *, user_id: int):
         searches = db.query(self.model).filter(Search.user_id == user_id).order_by(self.model.created_at.desc()).limit(5).all()
-        return [{"id": search.id, "search_text": search.input_search.get('search_text', '')} for search in searches]
+        return [{"id": search.id, "search_text": search.input_search.get('query', '')} for search in searches]
 
     def get_search_results(
         self,

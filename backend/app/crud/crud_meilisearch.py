@@ -3,6 +3,7 @@ from typing import List
 from meilisearch import Client
 from dotenv import load_dotenv
 from app.core.config import settings
+from fastapi.encoders import jsonable_encoder
 
 load_dotenv() 
 
@@ -41,6 +42,10 @@ class CrudMeilisearch:
     def update_filterable_settings(self, index_name: str, fields: list):
         return self.client.index(index_name).update_filterable_attributes(fields)
 
+    def get_filterable_settings(self, index_name: str):
+        return self.client.index(index_name).update_filterable_attributes()
+
+
     def add_rows_to_index(self, index_name, rows: List[dict], primary_key="id"):
         return self.client.index(index_name).add_documents(rows, primary_key)
 
@@ -70,8 +75,43 @@ class CrudMeilisearch:
             opt_params={"limit": 10},
         )["hits"]
     
-    def search_autocomplete(self,search_query:str,index_name):
-        return self.client.index(index_name).search(query=search_query,opt_params={"limit": 10,"showMatchesPosition": True})["hits"]
+    def search_autocomplete(self, search_query: str, index_name: str = None):
+
+        if index_name is None:
+            
+            # Retrieve all indexes
+            try:
+                all_indexes = self.client.get_indexes()  # Assuming this retrieves all indexes
+                all_indexes = jsonable_encoder(all_indexes.get("results"))
+                if not all_indexes:
+                    print("No indexes found.")
+                    return []
+                
+                results = []
+
+                for index in all_indexes:
+                    index_results = self.client.index(index['uid']).search(
+                        query=search_query,
+                        opt_params={"limit": 10, "showMatchesPosition": True}
+                    )["hits"]
+                    results.extend(index_results)  # Combine results from all indexes
+                return results
+            except Exception as e:
+                print(f"Error retrieving indexes: {e}")
+                return []
+        else:
+            # Perform search on a specific index
+
+            try:
+                response = self.client.index(index_name).search(
+                    query=search_query,
+                    opt_params={"limit": 10, "showMatchesPosition": True}
+                )
+                # Validate and return search results
+                return response.get("hits", [])
+            except Exception as e:
+                print(f"Error searching index '{index_name}': {e}")
+                return []
 
 
     def search_batch(

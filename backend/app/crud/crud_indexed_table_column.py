@@ -15,9 +15,12 @@ class CRUDIndexedTableColumn(CRUDBase[IndexedTableColumn, IndexedTableColumnCrea
       return db.query(IndexedTableColumn.name,IndexedTableColumn.unique_values,IndexedTableColumn.id).filter(IndexedTableColumn.table_id==table_id).all()
 
    def get_by_table_ids(self,db:Session,table_ids:List[str]):
-        return db.query(IndexedTableColumn.name).join(IndexedTable,IndexedTable.id == IndexedTableColumn.table_id).filter(IndexedTableColumn.table_id.in_(table_ids)).all()
-
+      column_rows = db.query(IndexedTableColumn.name,IndexedTable.name).join(IndexedTable,IndexedTable.id == IndexedTableColumn.table_id).filter(IndexedTableColumn.table_id.in_(table_ids)).all()
+      return column_rows
+      # for i in range(len(column_rows)):
+      #    column_rows[i] = column_rows[i][0]
+      # return column_rows
    def get_column_names(self,db:Session):
-        return db.query(IndexedTableColumn.name,IndexedTable.name).join(IndexedTable,IndexedTable.id == IndexedTableColumn.table_id).all()
+      return db.query(IndexedTableColumn.name,IndexedTable.name).join(IndexedTable,IndexedTable.id == IndexedTableColumn.table_id).all()
 
 indexed_table_column = CRUDIndexedTableColumn(IndexedTableColumn)

@@ -22,6 +22,7 @@ from app.core.security import settings
 from typing import List
 import datetime
 from pydantic import UUID4
+from fastapi.encoders import jsonable_encoder
 
 def extract_table_names(sql_query):
     """
@@ -119,7 +120,7 @@ def _execute_multi_search(search_queries: List[dict], headers: dict) -> List[dic
     
     payload = json.dumps({"queries": search_queries})
 
-    print(payload,"thisi is the payload")
+    print(payload,"this is the payload")
     
     response = requests.request("POST", url, headers=headers, data=payload)
     results = response.json()
@@ -156,6 +157,10 @@ def _update_search_result(
             extras={"error": error}
         )
     else:
+
+        if meiliresults:
+            meiliresults = json.loads(json.dumps(meiliresults).replace('\\u', ''))
+
         update_data = schemas.SearchResultUpdate(
             result=meiliresults,
             status="success",
@@ -165,6 +170,9 @@ def _update_search_result(
                 "table_ids": table_ids
             }
         )
+
+
+    
     
     crud.search_result.update(
         db=db,
@@ -201,6 +209,7 @@ def process_term_search(
 
         # If table_ids contains exactly one table, we're doing single table pagination
         if table_ids and len(table_ids) == 1:
+            print("GG 0")
             tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
             table_name = tables[0].name
             display_name = tables[0].display_name
@@ -255,27 +264,32 @@ def process_term_search(
                     
                     meiliresults = existing_results
         else:
+            print("GG 1")
             # Original multi-table search logic
             if table_ids:
                 tables = crud.indexed_table.get_tables_by_ids(db=db, table_ids=table_ids)
                 for table in tables:
                     #TODO: remove these conditionals
-                    if table.name in ["kp_employee", "name_age_rank"]:
-                        attributes_to_retrieve = table.attributes_to_retrieve
-                        print(attributes_to_retrieve,"these are attributes to retrieve")
-                        attributes_for_role = ["*"]
-                        if attributes_to_retrieve:
-                            attributes_for_role = attributes_to_retrieve.get(str(role_id))
-                            print(attributes_for_role,"these are attributes for role")
-                        search_queries.append(_create_query_dict(
-                            table.name, 
-                            search_query, 
-                            exact_match,
-                            skip,
-                            limit,
-                            attributes_for_role
-                        ))
+                    # if table.name in ["kp_employee", "name_age_rank"]:
+                    if table.name in ["driver_data_new",]:
+                        # driver_data_new index don't have any records in it so it hadn't been indexed
+                        continue
+                    attributes_to_retrieve = table.attributes_to_retrieve
+                    print(attributes_to_retrieve,"these are attributes to retrieve")
+                    attributes_for_role = ["*"]
+                    if attributes_to_retrieve:
+                        attributes_for_role = attributes_to_retrieve.get(str(role_id))
+                        print(attributes_for_role,"these are attributes for role")
+                    search_queries.append(_create_query_dict(
+                        table.name, 
+                        search_query, 
+                        exact_match,
+                        skip,
+                        limit,
+                        attributes_for_role
+                    ))
             else:
+                print("GG 2")
                 tables = crud.indexed_table.get_tables_by_role(db=db,role_id=role_id)
                 for table in tables:
                     attributes_to_retrieve = table.attributes_to_retrieve
@@ -285,15 +299,28 @@ def process_term_search(
                         attributes_for_role = attributes_to_retrieve.get(str(role_id))
                         print(attributes_for_role,"these are attributes for role")
                     #TODO: remove these conditionals
-                    if table.name in ["kp_employee", "name_age_rank"]:
-                        search_queries.append(_create_query_dict(
-                            table.name, 
-                            search_query, 
-                            exact_match,
-                            skip,
-                            limit,
-                            attributes_for_role
-                        ))
+                    # if table.name in ["kp_employee", "name_age_rank"]:
+                    if table.name in ["driver_data_new",]:
+                        # driver_data_new index don't have any records in it so it hadn't been indexed
+                        continue
+                    search_queries.append(_create_query_dict(
+                        table.name, 
+                        search_query, 
+                        exact_match,
+                        skip,
+                        limit,
+                        attributes_for_role
+                    ))
+
+                    # _update_search_result(
+                    #     db, 
+                    #     search_result, 
+                    #     meiliresults, 
+                    #     search_term,
+                    #     exact_match,
+                    #     table_ids,
+                    #     extras=extras
+                    # )
 
             # Create a mapping of table names to their IDs
             table_name_to_id = {table.name: str(table.id) for table in tables}
@@ -314,7 +341,7 @@ def process_term_search(
                 }
                 result["table_id"] = table_name_to_id.get(result["table_name"])
                 result["display_name"] = table_id_to_display_name.get(result["table_id"])
-                print(result, "this is the result new")
+                print("GG", type(result), result, "this is the result new")
 
 
         # Update extras
@@ -422,7 +449,8 @@ def execute_meilisearch_query(self,role_id,search_id,search_query ,queries,table
                 }
                 result["table_id"] = table_name_to_id.get(result["table_name"])
                 result["display_name"] = table_id_to_display_name.get(result["table_id"])
-                print(result, "this is the result new")
+                
+                print(type(result), result, "this is the result new")
 
 
         # Update extras
@@ -459,8 +487,6 @@ def execute_meilisearch_query(self,role_id,search_id,search_query ,queries,table
     
     finally:
         db.close()
-
-
 
 class DataProcessor(ABC):
     @abstractmethod
