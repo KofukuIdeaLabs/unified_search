@@ -439,7 +439,41 @@ def execute_meilisearch_query(self,role_id,search_id,search_query ,queries,table
             print(search_result,"this is the search result")
             table_name_to_id = {table.name: str(table.id) for table in tables}
             table_id_to_display_name = {str(table.id): table.display_name for table in tables}
+            print("GG 90190", len(meiliresults), meiliresults)
 
+            unique_meili_records = {}
+            # select unique records
+            for record_hit in meiliresults:
+                table_name = record_hit.get("table_name")
+                
+                if table_name not in unique_meili_records:
+                    unique_meili_records[table_name] = {
+                        "table_name": table_name,
+                        "result_data": [],
+                        "total_hits": 0}
+                
+                unique_meili_records[table_name]["result_data"].extend(record_hit.get("result_data"))
+
+            for table_name in unique_meili_records:
+                hit_results = unique_meili_records[table_name].get("result_data")
+
+                track_unique_hit = set()
+                i = 0
+                while i < len(hit_results):
+                    hit = hit_results[i]
+                    hit_id = hit.get("id")
+                    if hit_id in track_unique_hit:
+                        del hit_results[i]
+                    else:
+                        track_unique_hit.add(hit_id)
+                        i += 1
+
+                unique_meili_records[table_name].update({
+                    "result_data": hit_results,
+                    "total_hits": len(hit_results)
+                })
+
+            meiliresults = list(unique_meili_records.values())
 
             # Add pagination info and table_id to each table's results
             for result in meiliresults:
