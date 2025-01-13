@@ -1,16 +1,16 @@
 services:
 
-  db:
+  db_unified_search:
     restart: "no"
     ports:
-      - "5439:5432"
+      - "5447:5432"
 
-  adminer:
+  adminer_unified_search:
     restart: "no"
     ports:
-      - "8080:8080"
+      - "8083:8080"
 
-  backend:
+  backend_unified_search:
     restart: "no"
     ports:
       - "8000:8000"
@@ -23,4 +23,3 @@ services:
       - --reload
       - "app/main.py"
   
- 

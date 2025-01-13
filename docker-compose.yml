@@ -1,6 +1,5 @@
 services:
-
-  db:
+  db_unified_search:
     image: postgres:12
     restart: always
     healthcheck:
@@ -10,7 +9,7 @@ services:
       start_period: 30s
       timeout: 10s
     volumes:
-      - db-data:/var/lib/postgresql/data/pgdata
+      - db_data_unified_search:/var/lib/postgresql/data/pgdata
     env_file:
       - .env
     environment:
@@ -19,20 +18,20 @@ services:
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
       - POSTGRES_DB=${POSTGRES_DB?Variable not set}
 
-  adminer:
+  adminer_unified_search:
     image: adminer
     restart: always
     depends_on:
-      - db
+      - db_unified_search
     environment:
       - ADMINER_DESIGN=pepa-linha-dark
 
-  prestart:
-    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+  prestart_unified_search:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}"
     build:
       context: ./backend
     depends_on:
-      db:
+      db_unified_search:
         condition: service_healthy
     command: bash scripts/prestart.sh
     env_file:
@@ -49,23 +48,22 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - POSTGRES_SERVER=db
+      - POSTGRES_SERVER=db_unified_search
       - POSTGRES_PORT=${POSTGRES_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
-
     volumes:
       - ./backend/app:/app/app
 
-  backend:
-    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+  backend_unified_search:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}"
     restart: always
     depends_on:
-      db:
+      db_unified_search:
         condition: service_healthy
-      prestart:
+      prestart_unified_search:
         condition: service_completed_successfully
     env_file:
       - .env
@@ -81,7 +79,7 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - POSTGRES_SERVER=db
+      - POSTGRES_SERVER=db_unified_search
       - POSTGRES_PORT=${POSTGRES_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER?Variable not set}
@@ -89,7 +87,13 @@ services:
       - SENTRY_DSN=${SENTRY_DSN}
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:8000/api/v1/utils/health-check/",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -98,15 +102,16 @@ services:
       context: ./backend
     volumes:
       - ./backend/app:/app/app
-      - shared-storage:/storage
+      - shared_storage_unified_search:/storage
       - ./data_to_index:/app/data_to_index:rw
-  celery_worker:
-    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+      
+  celery_worker_unified_search:
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}"
     restart: always
     depends_on:
-      db:
+      db_unified_search:
         condition: service_healthy
-      prestart:
+      prestart_unified_search:
         condition: service_completed_successfully
     env_file:
       - .env
@@ -118,51 +123,65 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./logs:/app/logs
-      - shared-storage:/storage
+      - shared_storage_unified_search:/storage
       - ./data_to_index:/app/data_to_index:rw
     links:
-      - unified_search_rabbitmq
-
-  
+      - rabbitmq_unified_search
 
   meilisearch:
     image: getmeili/meilisearch:v1.8.1
-    restart: unless-stopped
+    restart: always
     ports:
-      - 7789:7700
+      - 7788:7700
     volumes:
-      # - meilisearch-data:/meili_data/data.ms
-      - ./meili_data:/meili_data
+      - ${MEILI_DATA:-./meili_data.ms}:/meili_data/data.ms
 
     env_file:
       - .env
 
-
-  vectordb:
+  vectordb_unified_search:
     image: qdrant/qdrant:v1.2.2
     #    mem_limit: 450m
-    restart: unless-stopped
+    restart: always
     ports:
-      - 6445:6333
+      - 6453:6333
     volumes:
-      - qdrant-data:/qdrant/storage
-
-  unified_search_rabbitmq:
-    container_name: unified_search_rabbitmq
+      - qdrant_data_unified_search:/qdrant/storage
+  rabbitmq_unified_search:
+    container_name: rabbitmq_unified_search
     image: rabbitmq:3.9.29-management-alpine
+    restart: always
     env_file:
       - .env
     ports:
-      - "5673:5672"
-      - "15673:15672"
+      - "5679:5672"
+      - "15679:15672"
     volumes:
-      - rabbitmq-data1:/data
+      - rabbitmq_data_unified_search:/data
 
-  
+  frontend_unified_search:
+    image: "${DOCKER_IMAGE_FRONTEND?Variable not set}:${TAG-latest}"
+    restart: always
+    build:
+      context: ./search_query_frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL?Variable not set}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET?Variable not set}
+      - NEXT_PUBLIC_FRONTEND_URL=${NEXT_PUBLIC_FRONTEND_URL?Variable not set}
+      - NEXTAUTH_URL=${NEXTAUTH_URL?Variable not set}
+      - NEXTAUTH_URL_INTERNAL=${NEXTAUTH_URL_INTERNAL?Variable not set}
+      - NEXT_PUBLIC_BACKEND_INTERNAL_URL=${NEXT_PUBLIC_BACKEND_INTERNAL_URL?Variable not set}
+    env_file:
+      - .env
+    links:
+      - backend_unified_search
+
 volumes:
-  db-data:
-  qdrant-data:
-  meilisearch-data:
-  rabbitmq-data1:
-  shared-storage:
-
+  db_data_unified_search:
+  qdrant_data_unified_search:
+  rabbitmq_data_unified_search:
+  shared_storage_unified_search:
